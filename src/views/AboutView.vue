@@ -48,10 +48,12 @@ const handleAddParticipant = async (e: { preventDefault: () => void }) => {
       role: role.value,
     }
 
+    // * Add the new participant
     await addParticipant(newParticipant)
+
     participants.value.push(newParticipant)
 
-    // Clear form
+    // * Clear form
     name.value = ''
     email.value = ''
     role.value = false
@@ -63,6 +65,9 @@ const handleAddParticipant = async (e: { preventDefault: () => void }) => {
 const fetchParticipants = async () => {
   try {
     const querySnapshot = await getDocs(collection(db, 'participants'))
+
+    console.log('querySnapshot:', querySnapshot.docs)
+
     participants.value = querySnapshot.docs.map((doc) => doc.data() as Participant)
   } catch (error) {
     console.error('Error fetching participants: ', error)
