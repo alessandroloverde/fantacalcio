@@ -14,7 +14,7 @@
         <label for="role">is Admin</label>
         <input type="checkbox" id="role" name="role" value="false" v-model="role" />
       </div>
-      <button @click="addParticipant">Inserisci</button>
+      <button @click="handleAddParticipant">Inserisci</button>
     </form>
 
     <div class="participants-list">
@@ -28,46 +28,35 @@
   </div>
 </template>
 <script setup lang="ts">
-import { db } from '@/firebase'
-import { collection, addDoc, getDocs } from 'firebase/firestore'
 import { ref, onMounted } from 'vue'
-
-interface Participant {
-  name: string
-  email: string
-  role: boolean
-}
+import { collection, getDocs } from 'firebase/firestore'
+import { db } from '@/firebase'
+import { addParticipant, type Participant } from '@/utils/addParticipants'
 
 const participants = ref<Participant[]>([])
 const name = ref('')
 const email = ref('')
 const role = ref(false)
 
-const addParticipant = async (e: { preventDefault: () => void }) => {
+const handleAddParticipant = async (e: { preventDefault: () => void }) => {
   e.preventDefault()
 
   try {
-    // Add to Firestore
-    const docRef = await addDoc(collection(db, 'participants'), {
+    const newParticipant = {
       name: name.value,
       email: email.value,
       role: role.value,
-    })
-    console.log('Document written with ID: ', docRef.id)
+    }
 
-    // Add to local array
-    participants.value.push({
-      name: name.value,
-      email: email.value,
-      role: role.value,
-    })
+    await addParticipant(newParticipant)
+    participants.value.push(newParticipant)
 
     // Clear form
     name.value = ''
     email.value = ''
     role.value = false
   } catch (error) {
-    console.error('Error adding participant: ', error)
+    console.error('Error in handleAddParticipant:', error)
   }
 }
 
