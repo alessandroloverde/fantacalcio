@@ -62,7 +62,7 @@ const toggleMode = () => {
 
 <style scoped>
 .login-form {
-  max-width: 400px;
+  max-width: 50%;
   margin: 2rem auto;
   padding: 2rem;
   border-radius: 8px;

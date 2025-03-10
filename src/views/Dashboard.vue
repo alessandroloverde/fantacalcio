@@ -14,7 +14,12 @@
       <div v-if="loading" class="loading">Loading participants...</div>
       <div v-else-if="error" class="error">{{ error }}</div>
       <div v-else class="participants-list">
-        <div v-for="participant in participants" :key="participant.id" class="participant-card">
+        <router-link
+          v-for="participant in participants"
+          :key="participant.id"
+          :to="{ name: 'participant-detail', params: { id: participant.id } }"
+          class="participant-card"
+        >
           <div class="participant-info">
             <h3>{{ participant.name }}</h3>
             <p>{{ participant.email }}</p>
@@ -24,7 +29,7 @@
               {{ participant.role ? 'Admin' : 'User' }}
             </span>
           </div>
-        </div>
+        </router-link>
       </div>
     </div>
   </div>
@@ -149,6 +154,14 @@ const handleLogout = async () => {
   background-color: #f8f9fa;
   border-radius: 4px;
   border: 1px solid #eee;
+  text-decoration: none;
+  transition: all 0.2s ease;
+}
+
+.participant-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+  border-color: #4caf50;
 }
 
 .participant-info h3 {
