@@ -18,7 +18,7 @@
           v-for="participant in participants"
           :key="participant.id"
           :to="{ name: 'participant-detail', params: { id: participant.id } }"
-          class="participant-card"
+          :class="['participant-card', { 'current-user': isCurrentUser(participant) }]"
         >
           <div class="participant-info">
             <h3>{{ participant.name }}</h3>
@@ -80,6 +80,10 @@ const handleLogout = async () => {
   } catch (error) {
     console.error('Error logging out:', error)
   }
+}
+
+const isCurrentUser = (participant: Participant & { id: string }) => {
+  return participant.email === authStore.user?.email
 }
 </script>
 
@@ -187,5 +191,15 @@ const handleLogout = async () => {
 .participant-role span.admin {
   background-color: #4caf50;
   color: white;
+}
+
+.participant-card.current-user {
+  border: 2px solid #2196f3;
+  background-color: #f5f9ff;
+}
+
+.participant-card.current-user:hover {
+  border-color: #2196f3;
+  box-shadow: 0 4px 12px rgba(33, 150, 243, 0.2);
 }
 </style>
