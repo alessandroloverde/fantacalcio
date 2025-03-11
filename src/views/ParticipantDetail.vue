@@ -22,7 +22,35 @@
           <label>Email</label>
           <p>{{ participant.email }}</p>
         </div>
-        <!-- Add more participant details here -->
+      </div>
+
+      <div class="team-section">
+        <h2>Team</h2>
+        <div class="team-import">
+          <input
+            type="file"
+            ref="fileInput"
+            accept=".csv"
+            @change="handleFileUpload"
+            class="file-input"
+          />
+          <button @click="importTeam" :disabled="!selectedFile" class="import-button">
+            Import Team from CSV
+          </button>
+        </div>
+
+        <div v-if="importError" class="error">{{ importError }}</div>
+
+        <div v-if="team.length > 0" class="team-list">
+          <div v-for="(player, index) in team" :key="index" class="player-card">
+            <div class="player-role">{{ player.role }}</div>
+            <div class="player-info">
+              <div class="player-name">{{ player.name }}</div>
+              <div class="player-team">{{ player.team }}</div>
+            </div>
+            <div class="player-cost">{{ player.cost }}M</div>
+          </div>
+        </div>
       </div>
     </div>
     <div v-else class="error">Participant not found</div>
@@ -32,18 +60,70 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
 import { useRoute } from 'vue-router'
-import { doc, getDoc } from 'firebase/firestore'
+import { doc, getDoc, setDoc } from 'firebase/firestore'
 import { db } from '@/firebase'
 import type { Participant } from '@/utils/addParticipants'
+import type { Player } from '@/types/Player'
 import { useAuthStore } from '@/stores/auth'
 
 const route = useRoute()
 const authStore = useAuthStore()
 const loading = ref(true)
 const error = ref('')
+const importError = ref('')
 const participant = ref<Participant | null>(null)
+const team = ref<Player[]>([])
+const fileInput = ref<HTMLInputElement | null>(null)
+const selectedFile = ref<File | null>(null)
 
 const isCurrentUser = computed(() => participant.value?.email === authStore.user?.email)
+
+const handleFileUpload = (event: Event) => {
+  const input = event.target as HTMLInputElement
+  if (input.files && input.files.length > 0) {
+    selectedFile.value = input.files[0]
+  }
+}
+
+const importTeam = async () => {
+  if (!selectedFile.value) return
+
+  importError.value = ''
+  const file = selectedFile.value
+
+  try {
+    const text = await file.text()
+    const lines = text.split('\n')
+
+    // Skip first two rows and process until row 26
+    const teamData = lines.slice(2, 26).map((line) => {
+      const [role, name, team, cost] = line.split(',').map((item) => item.trim())
+      return {
+        role,
+        name,
+        team,
+        cost: parseFloat(cost) || 0,
+      }
+    })
+
+    team.value = teamData.filter(
+      (player) => player.role && player.name && player.team && !isNaN(player.cost),
+    )
+
+    if (participant.value?.id) {
+      await setDoc(doc(db, 'participants', participant.value.id), {
+        ...participant.value,
+        team: team.value,
+      })
+    }
+
+    selectedFile.value = null
+    if (fileInput.value) fileInput.value.value = ''
+  } catch (err) {
+    importError.value = 'Error importing team. Please check the CSV format.'
+    console.error('Error importing team:', err)
+  }
+}
 
 const fetchParticipant = async () => {
   const participantId = route.params.id as string
@@ -52,10 +132,12 @@ const fetchParticipant = async () => {
     const docSnap = await getDoc(docRef)
 
     if (docSnap.exists()) {
+      const data = docSnap.data()
       participant.value = {
         id: docSnap.id,
         ...(docSnap.data() as Omit<Participant, 'id'>),
       } as Participant & { id: string }
+      team.value = data.team || []
     } else {
       error.value = 'Participant not found'
     }
@@ -169,5 +251,77 @@ onMounted(() => {
   font-size: 0.9rem;
   background-color: #2196f3;
   color: white;
+}
+
+.team-section {
+  margin-top: 2rem;
+}
+
+.team-section h2 {
+  margin-bottom: 1rem;
+  color: #333;
+}
+
+.team-import {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 2rem;
+}
+
+.file-input {
+  flex: 1;
+}
+
+.import-button {
+  padding: 0.5rem 1rem;
+  background-color: #4caf50;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.import-button:disabled {
+  background-color: #ccc;
+  cursor: not-allowed;
+}
+
+.team-list {
+  display: grid;
+  gap: 1rem;
+}
+
+.player-card {
+  display: flex;
+  align-items: center;
+  padding: 1rem;
+  background-color: #f8f9fa;
+  border-radius: 4px;
+  border: 1px solid #eee;
+}
+
+.player-role {
+  width: 80px;
+  font-weight: 500;
+  color: #666;
+}
+
+.player-info {
+  flex: 1;
+}
+
+.player-name {
+  font-weight: 500;
+  color: #333;
+}
+
+.player-team {
+  font-size: 0.9rem;
+  color: #666;
+}
+
+.player-cost {
+  font-weight: 500;
+  color: #4caf50;
 }
 </style>

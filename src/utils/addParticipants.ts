@@ -1,10 +1,13 @@
 import { db } from '@/firebase'
 import { collection, addDoc } from 'firebase/firestore'
+import type { Player } from '@/types/Player'
 
 export interface Participant {
   name: string
   email: string
   role: boolean
+  id?: string
+  team?: Player[]
 }
 
 /**
