@@ -118,7 +118,7 @@ const showClearTeamModal = ref(false)
 const previewTeam = ref<Player[]>([])
 
 const isCurrentUser = computed(() => participant.value?.email === authStore.user?.email)
-const isAdmin = computed(() => participant.value?.role === true)
+const isAdmin = computed(() => authStore.isAdmin)
 
 const handleFileUpload = (event: Event) => {
   const input = event.target as HTMLInputElement
