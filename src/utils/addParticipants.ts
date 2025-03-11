@@ -8,6 +8,7 @@ export interface Participant {
   role: boolean
   id?: string
   team?: Player[]
+  teamName?: string
 }
 
 /**

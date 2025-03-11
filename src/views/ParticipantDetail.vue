@@ -19,6 +19,8 @@
 
       <div class="participant-info">
         <div class="info-group">
+          <h2>{{ participant.teamName }}</h2>
+          <hr />
           <label>Email</label>
           <p>{{ participant.email }}</p>
         </div>
@@ -26,7 +28,7 @@
 
       <div class="team-section">
         <h2>Team</h2>
-        <div class="team-import">
+        <div v-if="isAdmin" class="team-import">
           <input
             type="file"
             ref="fileInput"
@@ -35,25 +37,61 @@
             class="file-input"
           />
           <button @click="importTeam" :disabled="!selectedFile" class="import-button">
-            Import Team from CSV
+            Load Team from CSV
           </button>
         </div>
 
         <div v-if="importError" class="error">{{ importError }}</div>
 
-        <div v-if="team.length > 0" class="team-list">
-          <div v-for="(player, index) in team" :key="index" class="player-card">
-            <div class="player-role">{{ player.role }}</div>
-            <div class="player-info">
-              <div class="player-name">{{ player.name }}</div>
-              <div class="player-team">{{ player.team }}</div>
+        <div v-if="previewTeam.length > 0 && isAdmin" class="preview-section">
+          <div class="preview-header">
+            <h3>Preview Team</h3>
+            <div class="preview-actions">
+              <button @click="cancelImport" class="cancel-button">Cancel</button>
+              <button @click="acceptTeam" class="accept-button">Accept Team</button>
             </div>
-            <div class="player-cost">{{ player.cost }}M</div>
+          </div>
+          <div class="team-list preview-list">
+            <div v-for="(player, index) in previewTeam" :key="index" class="player-card">
+              <div class="player-role">{{ player.role }}</div>
+              <div class="player-info">
+                <div class="player-name">{{ player.name }}</div>
+                <div class="player-team">{{ player.team }}</div>
+              </div>
+              <div class="player-cost">{{ player.cost }}M</div>
+            </div>
+          </div>
+        </div>
+
+        <div v-if="team.length > 0" class="current-team-section">
+          <div class="team-header">
+            <h3>Current Team</h3>
+            <button v-if="isAdmin" @click="showClearTeamModal = true" class="clear-button">
+              Clear Team
+            </button>
+          </div>
+          <div class="team-list">
+            <div v-for="(player, index) in team" :key="index" class="player-card">
+              <div class="player-role">{{ player.role }}</div>
+              <div class="player-info">
+                <div class="player-name">{{ player.name }}</div>
+                <div class="player-team">{{ player.team }}</div>
+              </div>
+              <div class="player-cost">{{ player.cost }}M</div>
+            </div>
           </div>
         </div>
       </div>
     </div>
     <div v-else class="error">Participant not found</div>
+
+    <ConfirmModal
+      :show="showClearTeamModal"
+      title="Clear Team"
+      message="Are you sure you want to clear the entire team? This action cannot be undone."
+      @confirm="clearTeam"
+      @cancel="() => (showClearTeamModal = false)"
+    />
   </div>
 </template>
 
@@ -65,6 +103,7 @@ import { db } from '@/firebase'
 import type { Participant } from '@/utils/addParticipants'
 import type { Player } from '@/types/Player'
 import { useAuthStore } from '@/stores/auth'
+import ConfirmModal from '@/components/ConfirmModal.vue'
 
 const route = useRoute()
 const authStore = useAuthStore()
@@ -75,8 +114,11 @@ const participant = ref<Participant | null>(null)
 const team = ref<Player[]>([])
 const fileInput = ref<HTMLInputElement | null>(null)
 const selectedFile = ref<File | null>(null)
+const showClearTeamModal = ref(false)
+const previewTeam = ref<Player[]>([])
 
 const isCurrentUser = computed(() => participant.value?.email === authStore.user?.email)
+const isAdmin = computed(() => participant.value?.role === true)
 
 const handleFileUpload = (event: Event) => {
   const input = event.target as HTMLInputElement
@@ -106,33 +148,69 @@ const importTeam = async () => {
       }
     })
 
-    team.value = teamData.filter(
+    previewTeam.value = teamData.filter(
       (player) => player.role && player.name && player.team && !isNaN(player.cost),
     )
 
-    if (participant.value?.id) {
-      await setDoc(doc(db, 'participants', participant.value.id), {
-        ...participant.value,
-        team: team.value,
-      })
+    if (previewTeam.value.length === 0) {
+      importError.value = 'No valid team data found in the CSV file'
     }
-
-    selectedFile.value = null
-    if (fileInput.value) fileInput.value.value = ''
   } catch (err) {
     importError.value = 'Error importing team. Please check the CSV format.'
     console.error('Error importing team:', err)
   }
 }
 
+const acceptTeam = async () => {
+  if (participant.value?.id) {
+    try {
+      await setDoc(doc(db, 'participants', participant.value.id), {
+        ...participant.value,
+        team: previewTeam.value,
+      })
+      team.value = previewTeam.value
+      previewTeam.value = []
+      selectedFile.value = null
+      if (fileInput.value) fileInput.value.value = ''
+    } catch (err) {
+      importError.value = 'Error saving team to database'
+      console.error('Error saving team:', err)
+    }
+  }
+}
+
+const cancelImport = () => {
+  previewTeam.value = []
+  selectedFile.value = null
+  if (fileInput.value) fileInput.value.value = ''
+}
+
+const clearTeam = async () => {
+  if (participant.value?.id) {
+    try {
+      await setDoc(doc(db, 'participants', participant.value.id), {
+        ...participant.value,
+        team: [],
+      })
+      team.value = []
+    } catch (err) {
+      error.value = 'Error clearing team from database'
+      console.error('Error clearing team:', err)
+    }
+  }
+  showClearTeamModal.value = false
+}
+
 const fetchParticipant = async () => {
   const participantId = route.params.id as string
+
   try {
     const docRef = doc(db, 'participants', participantId)
     const docSnap = await getDoc(docRef)
 
     if (docSnap.exists()) {
       const data = docSnap.data()
+
       participant.value = {
         id: docSnap.id,
         ...(docSnap.data() as Omit<Participant, 'id'>),
@@ -323,5 +401,100 @@ onMounted(() => {
 .player-cost {
   font-weight: 500;
   color: #4caf50;
+}
+
+.preview-section {
+  margin-bottom: 2rem;
+  padding: 1rem;
+  background-color: #f8f9fa;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+}
+
+.preview-list .player-card {
+  background-color: #f1f1f1;
+  border: 1px solid #ddd;
+}
+
+.preview-list .player-role {
+  color: #888;
+}
+
+.preview-list .player-name {
+  color: #666;
+}
+
+.preview-list .player-team {
+  color: #888;
+}
+
+.preview-list .player-cost {
+  color: #888;
+}
+
+.preview-actions .accept-button {
+  padding: 0.5rem 1rem;
+  background-color: #2196f3;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.preview-actions .accept-button:hover {
+  background-color: #1976d2;
+}
+
+.current-team-section {
+  margin-top: 2rem;
+}
+
+h3 {
+  margin-bottom: 1rem;
+  color: #333;
+}
+
+.preview-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.preview-actions {
+  display: flex;
+  gap: 1rem;
+}
+
+.preview-actions .cancel-button {
+  padding: 0.5rem 1rem;
+  background-color: #f8f9fa;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.preview-actions .cancel-button:hover {
+  background-color: #e9ecef;
+}
+
+.team-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.clear-button {
+  padding: 0.5rem 1rem;
+  background-color: #dc3545;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.clear-button:hover {
+  background-color: #c82333;
 }
 </style>
