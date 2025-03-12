@@ -1,9 +1,6 @@
 <template>
   <div class="dashboard">
-    <header class="dashboard-header">
-      <h1>Dashboard</h1>
-      <button @click="handleLogout" class="logout-button">Logout</button>
-    </header>
+    <AppNavigation />
 
     <div class="user-info" v-if="authStore.user">
       <p>Welcome, {{ authStore.user.email }}</p>
@@ -38,18 +35,16 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useAuthStore } from '@/stores/auth'
-import { useRouter } from 'vue-router'
-import { logout } from '@/utils/auth'
 import { collection, getDocs } from 'firebase/firestore'
 import { db } from '@/firebase'
 import type { Participant } from '@/utils/addParticipants'
+import AppNavigation from '@/components/AppNavigation.vue'
 
 defineOptions({
   name: 'UserDashboard',
 })
 
 const authStore = useAuthStore()
-const router = useRouter()
 const participants = ref<(Participant & { id: string })[]>([])
 const loading = ref(true)
 const error = ref('')
@@ -73,15 +68,6 @@ onMounted(() => {
   fetchParticipants()
 })
 
-const handleLogout = async () => {
-  try {
-    await logout()
-    router.push('/login')
-  } catch (error) {
-    console.error('Error logging out:', error)
-  }
-}
-
 const isCurrentUser = (participant: Participant & { id: string }) => {
   return participant.email === authStore.user?.email
 }
@@ -92,26 +78,6 @@ const isCurrentUser = (participant: Participant & { id: string }) => {
   padding: 2rem;
   max-width: 1200px;
   margin: 0 auto;
-}
-
-.dashboard-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 2rem;
-}
-
-.logout-button {
-  padding: 0.5rem 1rem;
-  background-color: #dc3545;
-  color: white;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-}
-
-.logout-button:hover {
-  background-color: #c82333;
 }
 
 .user-info {

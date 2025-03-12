@@ -23,6 +23,12 @@ const router = createRouter({
       component: () => import('../views/ParticipantDetail.vue'),
       meta: { requiresAuth: true },
     },
+    {
+      path: '/mercato',
+      name: 'mercato',
+      component: () => import('../views/Mercato.vue'),
+      meta: { requiresAuth: true },
+    },
     // Add other routes as needed
   ],
 })
