@@ -9,6 +9,7 @@ export interface Participant {
   id?: string
   team?: Player[]
   teamName?: string
+  logoData?: string // base64 encoded image data
 }
 
 /**

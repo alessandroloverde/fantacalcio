@@ -19,7 +19,36 @@
 
       <div class="participant-info">
         <div class="info-group">
-          <h2>{{ participant.teamName }}</h2>
+          <div class="team-header-section">
+            <div class="team-logo-container">
+              <img
+                v-if="participant.logoData"
+                :src="participant.logoData"
+                alt="Team Logo"
+                class="team-logo"
+              />
+              <div v-else class="team-logo-placeholder">
+                {{ participant.teamName?.[0]?.toUpperCase() || participant.name[0].toUpperCase() }}
+              </div>
+            </div>
+            <h2>{{ participant.teamName }}</h2>
+          </div>
+          <div v-if="isCurrentUser || isAdmin" class="logo-upload">
+            <input
+              type="file"
+              ref="logoInput"
+              accept="image/jpeg,image/png"
+              @change="handleLogoUpload"
+              class="logo-file-input"
+            />
+            <button @click="uploadLogo" :disabled="!selectedLogo" class="upload-button">
+              {{ participant.logoData ? 'Change Logo' : 'Upload Logo' }}
+            </button>
+            <button v-if="participant.logoData" @click="removeLogo" class="remove-button">
+              Remove Logo
+            </button>
+          </div>
+          <p v-if="logoError" class="error">{{ logoError }}</p>
           <hr />
           <label>Email</label>
           <p>{{ participant.email }}</p>
@@ -116,6 +145,9 @@ const fileInput = ref<HTMLInputElement | null>(null)
 const selectedFile = ref<File | null>(null)
 const showClearTeamModal = ref(false)
 const previewTeam = ref<Player[]>([])
+const logoInput = ref<HTMLInputElement | null>(null)
+const selectedLogo = ref<File | null>(null)
+const logoError = ref('')
 
 const isCurrentUser = computed(() => participant.value?.email === authStore.user?.email)
 const isAdmin = computed(() => authStore.isAdmin)
@@ -199,6 +231,109 @@ const clearTeam = async () => {
     }
   }
   showClearTeamModal.value = false
+}
+
+const handleLogoUpload = async (event: Event) => {
+  const input = event.target as HTMLInputElement
+  if (input.files && input.files.length > 0) {
+    const file = input.files[0]
+
+    // Check file size (500KB limit for base64)
+    if (file.size > 500 * 1024) {
+      logoError.value = 'Logo size must be less than 500KB'
+      input.value = ''
+      return
+    }
+
+    // Check file type
+    if (!file.type.match(/image\/(jpeg|png)/)) {
+      logoError.value = 'Logo must be a JPG or PNG file'
+      input.value = ''
+      return
+    }
+
+    selectedLogo.value = file
+    logoError.value = ''
+  }
+}
+
+const uploadLogo = async () => {
+  if (!selectedLogo.value || !participant.value?.id) return
+
+  const currentParticipant = participant.value
+  if (!currentParticipant) return
+
+  try {
+    // Convert image to base64
+    const reader = new FileReader()
+    reader.onload = async () => {
+      try {
+        const base64String = reader.result as string
+        const participantData: Participant = {
+          name: currentParticipant.name,
+          email: currentParticipant.email,
+          role: currentParticipant.role,
+          id: currentParticipant.id,
+          team: currentParticipant.team,
+          teamName: currentParticipant.teamName,
+          logoData: base64String,
+        }
+
+        // Update participant document
+        const participantRef = doc(db, 'participants', currentParticipant.id!)
+        await setDoc(participantRef, participantData)
+
+        // Update local state
+        participant.value = participantData
+
+        // Reset file input
+        selectedLogo.value = null
+        if (logoInput.value) logoInput.value.value = ''
+        logoError.value = ''
+      } catch (err) {
+        logoError.value = 'Error saving logo'
+        console.error('Error saving logo:', err)
+      }
+    }
+
+    reader.onerror = () => {
+      logoError.value = 'Error reading logo file'
+    }
+
+    reader.readAsDataURL(selectedLogo.value)
+  } catch (err) {
+    logoError.value = 'Error processing logo'
+    console.error('Error processing logo:', err)
+  }
+}
+
+const removeLogo = async () => {
+  if (!participant.value?.id) return
+
+  const currentParticipant = participant.value
+  if (!currentParticipant) return
+
+  try {
+    // Create a new participant object without the logoData field
+    const participantData = {
+      name: currentParticipant.name,
+      email: currentParticipant.email,
+      role: currentParticipant.role,
+      id: currentParticipant.id,
+      team: currentParticipant.team,
+      teamName: currentParticipant.teamName,
+    }
+
+    // Update participant document
+    const participantRef = doc(db, 'participants', currentParticipant.id)
+    await setDoc(participantRef, participantData)
+
+    // Update local state
+    participant.value = participantData as Participant
+  } catch (err) {
+    logoError.value = 'Error removing logo'
+    console.error('Error removing logo:', err)
+  }
 }
 
 const fetchParticipant = async () => {
@@ -496,5 +631,69 @@ h3 {
 
 .clear-button:hover {
   background-color: #c82333;
+}
+
+.team-logo-container {
+  width: 100px;
+  height: 100px;
+  border-radius: 50%;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: #f0f0f0;
+  flex-shrink: 0;
+}
+
+.team-logo {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.team-logo-placeholder {
+  font-size: 2.5rem;
+  font-weight: bold;
+  color: #666;
+}
+
+.logo-upload {
+  margin-top: 1rem;
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+}
+
+.logo-file-input {
+  flex: 1;
+}
+
+.upload-button {
+  padding: 0.5rem 1rem;
+  background-color: #4caf50;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.upload-button:disabled {
+  background-color: #ccc;
+  cursor: not-allowed;
+}
+
+.remove-button {
+  padding: 0.5rem 1rem;
+  background-color: #dc3545;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.error {
+  color: #dc3545;
+  margin-top: 0.5rem;
+  font-size: 0.9rem;
 }
 </style>
