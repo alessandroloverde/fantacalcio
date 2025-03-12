@@ -170,7 +170,7 @@ const importTeam = async () => {
     const lines = text.split('\n')
 
     // Skip first two rows and process until row 26
-    const teamData = lines.slice(2, 26).map((line) => {
+    const teamData = lines.slice(2, 27).map((line) => {
       const [role, name, team, cost] = line.split(',').map((item) => item.trim())
       return {
         role,
