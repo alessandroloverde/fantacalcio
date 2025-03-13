@@ -28,7 +28,7 @@
           </div>
 
           <div v-if="currentTeam.length >= 25" class="form-group">
-            <label for="replacedPlayer">Player to Replace</label>
+            <label for="replacedPlayer">Player to Replace (Required)</label>
             <select v-model="replacedPlayer" id="replacedPlayer" class="form-input" required>
               <option value="">Select a player to replace</option>
               <option v-for="p in currentTeam" :key="p.name" :value="p">
@@ -77,7 +77,7 @@ const isValid = computed(() => {
     return false
   }
 
-  if (props.currentTeam.length >= 26 && !replacedPlayer.value) {
+  if (props.currentTeam.length >= 25 && !replacedPlayer.value) {
     return false
   }
 
@@ -100,7 +100,7 @@ const handleSubmit = () => {
   }
 
   // Validate player replacement if team is full
-  if (props.currentTeam.length >= 26 && !replacedPlayer.value) {
+  if (props.currentTeam.length >= 25 && !replacedPlayer.value) {
     replacementError.value = 'You must select a player to replace'
     return
   }

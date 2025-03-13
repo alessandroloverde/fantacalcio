@@ -50,6 +50,9 @@
                 <p v-if="player.currentBid.replacedPlayer">
                   Replacing: {{ player.currentBid.replacedPlayer.name }}
                 </p>
+                <button v-if="isAdmin" @click="deleteBid(player)" class="delete-bid-button">
+                  Delete Auction
+                </button>
               </div>
             </div>
             <div class="player-quotation">{{ player.quotation }}M</div>
@@ -74,6 +77,14 @@
       @close="closeBidModal"
       @submit="handleBidSubmit"
     />
+
+    <ConfirmModal
+      :show="showDeleteConfirmation"
+      title="Delete Auction"
+      :message="'Are you sure you want to delete the auction for ' + playerToDelete?.name + '?'"
+      @confirm="confirmDeleteBid"
+      @cancel="closeDeleteConfirmation"
+    />
   </div>
 </template>
 
@@ -89,6 +100,7 @@ import {
   getDocs,
   addDoc,
   Timestamp,
+  deleteDoc,
 } from 'firebase/firestore'
 import { db } from '@/firebase'
 import type { Player } from '@/types/Player'
@@ -96,6 +108,7 @@ import type { Bid } from '@/types/Bid'
 import { useAuthStore } from '@/stores/auth'
 import AppNavigation from '@/components/AppNavigation.vue'
 import BidModal from '@/components/BidModal.vue'
+import ConfirmModal from '@/components/ConfirmModal.vue'
 
 defineOptions({
   name: 'MercatoView',
@@ -115,6 +128,10 @@ const showBidModal = ref(false)
 const selectedPlayer = ref<Player | null>(null)
 const currentTeam = ref<Player[]>([])
 const availableCredits = ref(500) // Default budget, you might want to fetch this from Firestore
+
+// Add these refs for the confirmation dialog
+const showDeleteConfirmation = ref(false)
+const playerToDelete = ref<Player | null>(null)
 
 // Computed properties for filters
 const uniqueRoles = computed(() => [...new Set(players.value.map((p) => p.role))].sort())
@@ -299,11 +316,57 @@ const fetchActiveBids = async () => {
   }
 }
 
+// Update the deleteBid function to show confirmation first
+const deleteBid = (player: Player) => {
+  playerToDelete.value = player
+  showDeleteConfirmation.value = true
+}
+
+// Add the actual delete function
+const confirmDeleteBid = async () => {
+  if (!playerToDelete.value?.currentBid) return
+
+  try {
+    // Get all bids for this player
+    const bidsQuery = query(
+      collection(db, 'bids'),
+      where('playerId', '==', playerToDelete.value.name),
+    )
+
+    const bidsSnapshot = await getDocs(bidsQuery)
+
+    // Delete all bids for this player
+    const deletePromises = bidsSnapshot.docs.map((doc) => deleteDoc(doc.ref))
+
+    await Promise.all(deletePromises)
+
+    // Update local state
+    const playerIndex = players.value.findIndex((p) => p.name === playerToDelete.value?.name)
+    if (playerIndex !== -1) {
+      players.value[playerIndex] = {
+        ...players.value[playerIndex],
+        currentBid: undefined,
+      }
+    }
+  } catch (err) {
+    error.value = 'Error deleting auction'
+    console.error('Error deleting auction:', err)
+  } finally {
+    // Reset the confirmation state
+    showDeleteConfirmation.value = false
+    playerToDelete.value = null
+  }
+}
+
+// Add the closeDeleteConfirmation function
+const closeDeleteConfirmation = () => {
+  showDeleteConfirmation.value = false
+  playerToDelete.value = null
+}
+
 // Update existing onMounted logic
 fetchPlayers()
-if (!isAdmin.value) {
-  fetchCurrentTeam()
-}
+fetchCurrentTeam()
 fetchActiveBids()
 </script>
 
@@ -472,5 +535,20 @@ fetchActiveBids()
 
 .bid-button:hover {
   background-color: #45a049;
+}
+
+.delete-bid-button {
+  margin-top: 0.5rem;
+  padding: 0.25rem 0.5rem;
+  background-color: #dc3545;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.delete-bid-button:hover {
+  background-color: #c82333;
 }
 </style>
