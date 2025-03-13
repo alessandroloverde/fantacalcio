@@ -43,22 +43,59 @@
             <div class="player-info">
               <div class="player-name">{{ player.name }}</div>
               <div class="player-team">{{ player.team }}</div>
+              <div v-if="player.currentBid" class="player-bid">
+                <p>Current Bid: {{ player.currentBid.amount }}M</p>
+                <p>By: {{ player.currentBid.bidderTeamName }}</p>
+                <p>Expires: {{ formatDate(player.currentBid.expiresAt) }}</p>
+                <p v-if="player.currentBid.replacedPlayer">
+                  Replacing: {{ player.currentBid.replacedPlayer.name }}
+                </p>
+              </div>
             </div>
             <div class="player-quotation">{{ player.quotation }}M</div>
+            <button
+              v-if="authStore.participantData"
+              @click="openBidModal(player)"
+              class="bid-button"
+            >
+              Acquista
+            </button>
           </div>
         </div>
       </div>
     </div>
+
+    <BidModal
+      v-if="showBidModal"
+      :show="showBidModal"
+      :player="selectedPlayer!"
+      :current-team="currentTeam"
+      :available-credits="availableCredits"
+      @close="closeBidModal"
+      @submit="handleBidSubmit"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { setDoc, doc, getDoc } from 'firebase/firestore'
+import {
+  setDoc,
+  doc,
+  getDoc,
+  collection,
+  query,
+  where,
+  getDocs,
+  addDoc,
+  Timestamp,
+} from 'firebase/firestore'
 import { db } from '@/firebase'
 import type { Player } from '@/types/Player'
+import type { Bid } from '@/types/Bid'
 import { useAuthStore } from '@/stores/auth'
 import AppNavigation from '@/components/AppNavigation.vue'
+import BidModal from '@/components/BidModal.vue'
 
 defineOptions({
   name: 'MercatoView',
@@ -73,6 +110,11 @@ const players = ref<Player[]>([])
 const roleFilter = ref('')
 const teamFilter = ref('')
 const searchQuery = ref('')
+
+const showBidModal = ref(false)
+const selectedPlayer = ref<Player | null>(null)
+const currentTeam = ref<Player[]>([])
+const availableCredits = ref(500) // Default budget, you might want to fetch this from Firestore
 
 // Computed properties for filters
 const uniqueRoles = computed(() => [...new Set(players.value.map((p) => p.role))].sort())
@@ -164,7 +206,105 @@ const fetchPlayers = async () => {
   }
 }
 
+const openBidModal = (player: Player) => {
+  selectedPlayer.value = player
+  showBidModal.value = true
+}
+
+const closeBidModal = () => {
+  selectedPlayer.value = null
+  showBidModal.value = false
+}
+
+const handleBidSubmit = async (bidData: Omit<Bid, 'playerId'>) => {
+  if (!selectedPlayer.value) return
+
+  try {
+    // Create bid object without undefined values
+    const bidToSave = {
+      playerId: selectedPlayer.value.name,
+      bidderTeamName: bidData.bidderTeamName,
+      bidderParticipantId: bidData.bidderParticipantId,
+      amount: bidData.amount,
+      expiresAt: Timestamp.fromDate(bidData.expiresAt),
+      createdAt: Timestamp.fromDate(bidData.createdAt),
+    }
+
+    // Only add replacedPlayer if it exists
+    if (bidData.replacedPlayer) {
+      Object.assign(bidToSave, { replacedPlayer: bidData.replacedPlayer })
+    }
+
+    // Add bid to Firestore
+    await addDoc(collection(db, 'bids'), bidToSave)
+
+    // Fetch updated bids immediately
+    await fetchActiveBids()
+
+    closeBidModal()
+  } catch (err) {
+    error.value = 'Error placing bid'
+    console.error('Error placing bid:', err)
+  }
+}
+
+const formatDate = (date: Date | { seconds: number; nanoseconds: number }) => {
+  if (date instanceof Date) {
+    return date.toLocaleString()
+  }
+  // Handle Firestore Timestamp
+  return new Date(date.seconds * 1000).toLocaleString()
+}
+
+// Fetch current team on component mount
+const fetchCurrentTeam = async () => {
+  if (!authStore.participantData?.id) return
+
+  try {
+    const participantDoc = await getDoc(doc(db, 'participants', authStore.participantData.id))
+    if (participantDoc.exists()) {
+      const data = participantDoc.data()
+      currentTeam.value = data.team || []
+      availableCredits.value = data.availableCredits || 500
+    }
+  } catch (err) {
+    console.error('Error fetching current team:', err)
+  }
+}
+
+// Fetch active bids for players
+const fetchActiveBids = async () => {
+  try {
+    const now = Timestamp.now()
+    const bidsQuery = query(collection(db, 'bids'), where('expiresAt', '>', now))
+
+    const bidsSnapshot = await getDocs(bidsQuery)
+    const activeBids = bidsSnapshot.docs.map((doc) => ({
+      ...doc.data(),
+      // Convert Firestore Timestamps back to dates for the UI
+      expiresAt: doc.data().expiresAt,
+      createdAt: doc.data().createdAt,
+    })) as Bid[]
+
+    // Update players with their current bids
+    players.value = players.value.map((player) => {
+      const currentBid = activeBids.find((bid) => bid.playerId === player.name)
+      return {
+        ...player,
+        currentBid,
+      }
+    })
+  } catch (err) {
+    console.error('Error fetching active bids:', err)
+  }
+}
+
+// Update existing onMounted logic
 fetchPlayers()
+if (!isAdmin.value) {
+  fetchCurrentTeam()
+}
+fetchActiveBids()
 </script>
 
 <style scoped>
@@ -274,16 +414,19 @@ fetchPlayers()
   background-color: #f8f9fa;
   border-radius: 4px;
   border: 1px solid #eee;
+  gap: 1rem;
 }
 
 .player-role {
   width: 80px;
   font-weight: 500;
   color: #666;
+  flex-shrink: 0;
 }
 
 .player-info {
   flex: 1;
+  min-width: 0;
 }
 
 .player-name {
@@ -299,5 +442,35 @@ fetchPlayers()
 .player-quotation {
   font-weight: 500;
   color: #4caf50;
+  margin: 0 1rem;
+  flex-shrink: 0;
+}
+
+.player-bid {
+  margin-top: 0.5rem;
+  font-size: 0.9rem;
+  color: #666;
+  padding: 0.5rem;
+  background-color: #f0f0f0;
+  border-radius: 4px;
+}
+
+.player-bid p {
+  margin: 0.25rem 0;
+}
+
+.bid-button {
+  padding: 0.5rem 1rem;
+  background-color: #4caf50;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.bid-button:hover {
+  background-color: #45a049;
 }
 </style>
