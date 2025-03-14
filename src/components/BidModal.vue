@@ -15,27 +15,31 @@
 
         <div class="bid-form">
           <div class="form-group">
-            <label for="bidAmount">Bid Amount (M)</label>
+            <label for="bidAmount">Bid Amount (M):</label>
             <input
               type="number"
               id="bidAmount"
-              v-model.number="bidAmount"
-              :min="1"
+              v-model="bidAmount"
               :max="availableCredits"
-              class="form-input"
+              min="1"
             />
-            <span v-if="bidError" class="error">{{ bidError }}</span>
+            <span class="helper-text">Available Credits: {{ availableCredits }}M</span>
           </div>
 
-          <div v-if="currentTeam.length >= 25" class="form-group">
-            <label for="replacedPlayer">Player to Replace (Required)</label>
-            <select v-model="replacedPlayer" id="replacedPlayer" class="form-input" required>
+          <div class="form-group" v-if="currentTeam.length > 0">
+            <label for="replacedPlayer">
+              Replace Player
+              <span v-if="needsReplacement" class="required"
+                >(Required - Team at maximum size of {{ maxTeamSize }})</span
+              >
+              <span v-else>(Optional)</span>
+            </label>
+            <select id="replacedPlayer" v-model="replacedPlayer" :required="needsReplacement">
               <option value="">Select a player to replace</option>
-              <option v-for="p in currentTeam" :key="p.name" :value="p">
-                {{ p.name }} ({{ p.role }})
+              <option v-for="teamPlayer in currentTeam" :key="teamPlayer.name" :value="teamPlayer">
+                {{ teamPlayer.name }} ({{ teamPlayer.role }})
               </option>
             </select>
-            <span v-if="replacementError" class="error">{{ replacementError }}</span>
           </div>
         </div>
       </div>
@@ -53,6 +57,7 @@ import { ref, computed } from 'vue'
 import type { Player } from '@/types/Player'
 import type { Bid } from '@/types/Bid'
 import { useAuthStore } from '@/stores/auth'
+import { useSettings } from '@/composables/useSettings'
 
 const props = defineProps<{
   show: boolean
@@ -67,20 +72,19 @@ const emit = defineEmits<{
 }>()
 
 const authStore = useAuthStore()
+const { maxTeamSize } = useSettings()
 const bidAmount = ref(1)
 const replacedPlayer = ref<Player | null>(null)
 const bidError = ref('')
 const replacementError = ref('')
 
+const needsReplacement = computed(() => {
+  return props.currentTeam.length >= maxTeamSize.value
+})
+
 const isValid = computed(() => {
-  if (bidAmount.value < 1 || bidAmount.value > props.availableCredits) {
-    return false
-  }
-
-  if (props.currentTeam.length >= 25 && !replacedPlayer.value) {
-    return false
-  }
-
+  if (bidAmount.value < 1 || bidAmount.value > props.availableCredits) return false
+  if (needsReplacement.value && !replacedPlayer.value) return false
   return true
 })
 
@@ -100,7 +104,7 @@ const handleSubmit = () => {
   }
 
   // Validate player replacement if team is full
-  if (props.currentTeam.length >= 25 && !replacedPlayer.value) {
+  if (props.currentTeam.length >= maxTeamSize.value && !replacedPlayer.value) {
     replacementError.value = 'You must select a player to replace'
     return
   }

@@ -29,6 +29,12 @@ const router = createRouter({
       component: () => import('../views/Mercato.vue'),
       meta: { requiresAuth: true },
     },
+    {
+      path: '/settings',
+      name: 'settings',
+      component: () => import('../views/Settings.vue'),
+      meta: { requiresAuth: true },
+    },
     // Add other routes as needed
   ],
 })

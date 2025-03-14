@@ -12,6 +12,9 @@
       <router-link to="/mercato" class="nav-link" :class="{ active: $route.path === '/mercato' }">
         Mercato
       </router-link>
+      <router-link to="/settings" class="nav-link" :class="{ active: $route.path === '/settings' }">
+        Settings
+      </router-link>
       <button @click="handleLogout" class="nav-link logout-button">Logout</button>
     </nav>
   </header>

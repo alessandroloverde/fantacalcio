@@ -46,7 +46,7 @@
               <div v-if="player.currentBid" class="player-bid">
                 <p>Current Bid: {{ player.currentBid.amount }}M</p>
                 <p>By: {{ player.currentBid.bidderTeamName }}</p>
-                <p>Expires: {{ formatDate(player.currentBid.expiresAt) }}</p>
+                <p>Expires in: <CountdownTimer :expiry-date="player.currentBid.expiresAt" /></p>
                 <p v-if="player.currentBid.replacedPlayer">
                   Replacing: {{ player.currentBid.replacedPlayer.name }}
                 </p>
@@ -109,6 +109,7 @@ import { useAuthStore } from '@/stores/auth'
 import AppNavigation from '@/components/AppNavigation.vue'
 import BidModal from '@/components/BidModal.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
+import CountdownTimer from '@/components/CountdownTimer.vue'
 
 defineOptions({
   name: 'MercatoView',
@@ -263,14 +264,6 @@ const handleBidSubmit = async (bidData: Omit<Bid, 'playerId'>) => {
     error.value = 'Error placing bid'
     console.error('Error placing bid:', err)
   }
-}
-
-const formatDate = (date: Date | { seconds: number; nanoseconds: number }) => {
-  if (date instanceof Date) {
-    return date.toLocaleString()
-  }
-  // Handle Firestore Timestamp
-  return new Date(date.seconds * 1000).toLocaleString()
 }
 
 // Fetch current team on component mount
@@ -520,6 +513,9 @@ fetchActiveBids()
 
 .player-bid p {
   margin: 0.25rem 0;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
 }
 
 .bid-button {
