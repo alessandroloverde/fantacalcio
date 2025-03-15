@@ -100,7 +100,12 @@
             </button>
           </div>
           <div class="team-list">
-            <div v-for="(player, index) in team" :key="index" class="player-card">
+            <div
+              v-for="(player, index) in team"
+              :key="index"
+              class="player-card"
+              :class="`role-${player.role}`"
+            >
               <div class="player-index">{{ index + 1 }}</div>
               <div class="player-role">{{ player.role }}</div>
               <div class="player-info">
@@ -561,6 +566,19 @@ onMounted(() => {
   color: #666;
 }
 
+.role-P {
+  background-color: #c6b8b0;
+}
+.role-D {
+  background-color: #a4b9a5;
+}
+.role-C {
+  background-color: #c7aac4;
+}
+.role-A {
+  background-color: #acb9c3;
+}
+
 .player-info {
   flex: 1;
 }
@@ -577,7 +595,7 @@ onMounted(() => {
 
 .player-cost {
   font-weight: 500;
-  color: #4caf50;
+  color: #155117;
 }
 
 .preview-section {
