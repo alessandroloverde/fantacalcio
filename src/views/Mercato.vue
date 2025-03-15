@@ -85,6 +85,20 @@
       @confirm="confirmDeleteBid"
       @cancel="closeDeleteConfirmation"
     />
+
+    <AuctionCompletionModal
+      v-if="showAuctionCompletionModal && wonAuction"
+      :show="showAuctionCompletionModal"
+      :player="wonAuction.player"
+      :bid-amount="wonAuction.bidAmount"
+      :current-team="currentTeam"
+      :current-credits="authStore.participantData?.credits || 0"
+      :participant-id="authStore.participantData?.id || ''"
+      :initial-replacement="wonAuction.initialReplacement"
+      :auto-confirm-time="wonAuction.autoConfirmTime"
+      @close="showAuctionCompletionModal = false"
+      @completed="handleAuctionCompleted"
+    />
   </div>
 </template>
 
@@ -101,6 +115,7 @@ import {
   addDoc,
   Timestamp,
   deleteDoc,
+  updateDoc,
 } from 'firebase/firestore'
 import { db } from '@/firebase'
 import type { Player } from '@/types/Player'
@@ -110,6 +125,7 @@ import AppNavigation from '@/components/AppNavigation.vue'
 import BidModal from '@/components/BidModal.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
 import CountdownTimer from '@/components/CountdownTimer.vue'
+import AuctionCompletionModal from '@/components/AuctionCompletionModal.vue'
 
 defineOptions({
   name: 'MercatoView',
@@ -133,6 +149,14 @@ const availableCredits = ref(500) // Default budget, you might want to fetch thi
 // Add these refs for the confirmation dialog
 const showDeleteConfirmation = ref(false)
 const playerToDelete = ref<Player | null>(null)
+
+const showAuctionCompletionModal = ref(false)
+const wonAuction = ref<{
+  player: Player
+  bidAmount: number
+  initialReplacement?: Player
+  autoConfirmTime?: Date
+} | null>(null)
 
 // Computed properties for filters
 const uniqueRoles = computed(() => [...new Set(players.value.map((p) => p.role))].sort())
@@ -246,6 +270,7 @@ const handleBidSubmit = async (bidData: Omit<Bid, 'playerId'>) => {
       amount: bidData.amount,
       expiresAt: Timestamp.fromDate(bidData.expiresAt),
       createdAt: Timestamp.fromDate(bidData.createdAt),
+      completed: false,
     }
 
     // Only add replacedPlayer if it exists
@@ -286,15 +311,43 @@ const fetchCurrentTeam = async () => {
 const fetchActiveBids = async () => {
   try {
     const now = Timestamp.now()
-    const bidsQuery = query(collection(db, 'bids'), where('expiresAt', '>', now))
 
-    const bidsSnapshot = await getDocs(bidsQuery)
-    const activeBids = bidsSnapshot.docs.map((doc) => ({
-      ...doc.data(),
-      // Convert Firestore Timestamps back to dates for the UI
-      expiresAt: doc.data().expiresAt,
-      createdAt: doc.data().createdAt,
-    })) as Bid[]
+    // First, fetch all bids that aren't completed
+    const bidsQuery = query(collection(db, 'bids'), where('completed', '==', false))
+
+    const querySnapshot = await getDocs(bidsQuery)
+    const allBids = querySnapshot.docs.map((doc) => ({
+      id: doc.id,
+      playerId: doc.data().playerId,
+      bidderTeamName: doc.data().bidderTeamName,
+      bidderParticipantId: doc.data().bidderParticipantId,
+      amount: doc.data().amount,
+      replacedPlayer: doc.data().replacedPlayer,
+      completed: doc.data().completed,
+      expiresAt: doc.data().expiresAt.toDate(),
+      createdAt: doc.data().createdAt.toDate(),
+    }))
+
+    // Separate active and expired bids in memory
+    const activeBids = allBids.filter((bid) => bid.expiresAt > now.toDate())
+    const expiredBids = allBids.filter((bid) => bid.expiresAt <= now.toDate())
+
+    // Handle expired bids
+    for (const bid of expiredBids) {
+      if (bid.bidderParticipantId === authStore.participantData?.id) {
+        // Show completion modal for the winning participant
+        wonAuction.value = {
+          player: players.value.find((p) => p.name === bid.playerId)!,
+          bidAmount: bid.amount,
+          initialReplacement: bid.replacedPlayer,
+          autoConfirmTime: new Date(bid.expiresAt.getTime() + 12 * 60 * 60 * 1000), // 12 hours after bid expiration
+        }
+        showAuctionCompletionModal.value = true
+      }
+
+      // Mark bid as completed
+      await updateDoc(doc(db, 'bids', bid.id), { completed: true })
+    }
 
     // Update players with their current bids
     players.value = players.value.map((player) => {
@@ -304,8 +357,8 @@ const fetchActiveBids = async () => {
         currentBid,
       }
     })
-  } catch (err) {
-    console.error('Error fetching active bids:', err)
+  } catch (error) {
+    console.error('Error fetching bids:', error)
   }
 }
 
@@ -355,6 +408,13 @@ const confirmDeleteBid = async () => {
 const closeDeleteConfirmation = () => {
   showDeleteConfirmation.value = false
   playerToDelete.value = null
+}
+
+const handleAuctionCompleted = () => {
+  showAuctionCompletionModal.value = false
+  wonAuction.value = null
+  fetchCurrentTeam()
+  fetchActiveBids()
 }
 
 // Update existing onMounted logic

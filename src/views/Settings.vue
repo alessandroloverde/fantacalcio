@@ -18,8 +18,8 @@
               id="maxTeamSize"
               v-model="maxTeamSize"
               :disabled="!isAdmin"
-              min="1"
-              max="100"
+              min="22"
+              max="28"
             />
             <button
               v-if="isAdmin"
@@ -34,6 +34,64 @@
             The maximum number of players that can be in a team. This affects the bidding process.
           </p>
         </div>
+
+        <div class="setting-item">
+          <label for="initialBudget">Initial Team Budget (Credits):</label>
+          <div class="setting-control">
+            <input
+              type="number"
+              id="initialBudget"
+              v-model="initialBudget"
+              :disabled="!isAdmin"
+              min="100"
+              max="1000"
+              step="10"
+            />
+          </div>
+          <p class="setting-description">
+            The initial budget allocated to new teams. This is the starting amount of credits for
+            player acquisitions.
+          </p>
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <h2>Auction Settings</h2>
+        <div class="setting-item">
+          <label for="bidExpirationMinutes">Bid Expiration Time (Minutes):</label>
+          <div class="setting-control">
+            <input
+              type="number"
+              id="bidExpirationMinutes"
+              v-model="bidExpirationMinutes"
+              :disabled="!isAdmin"
+              min="1"
+              max="4320"
+            />
+          </div>
+          <p class="setting-description">
+            The time in minutes before a bid expires. After this time, if no counterbid is made, the
+            bid is successful. Minimum 1 minute, maximum 72 hours (4320 minutes).
+          </p>
+        </div>
+
+        <div class="setting-item">
+          <label for="counterbidExpirationMinutes">Counterbid Expiration Time (Minutes):</label>
+          <div class="setting-control">
+            <input
+              type="number"
+              id="counterbidExpirationMinutes"
+              v-model="counterbidExpirationMinutes"
+              :disabled="!isAdmin"
+              min="1"
+              max="4320"
+            />
+          </div>
+          <p class="setting-description">
+            The time in minutes before a counterbid expires. This will be used when the counterbid
+            feature is implemented. Minimum 1 minute, maximum 72 hours (4320 minutes).
+          </p>
+        </div>
       </div>
     </div>
   </div>
@@ -45,6 +103,7 @@ import { doc, getDoc, setDoc } from 'firebase/firestore'
 import { db } from '@/firebase'
 import { useAuthStore } from '@/stores/auth'
 import AppNavigation from '@/components/AppNavigation.vue'
+import type { Settings } from '@/composables/useSettings'
 
 defineOptions({
   name: 'SettingsView',
@@ -56,24 +115,54 @@ const isAdmin = computed(() => authStore.isAdmin)
 const error = ref('')
 const success = ref('')
 const maxTeamSize = ref(25)
-const originalMaxTeamSize = ref(25)
+const initialBudget = ref(400)
+const bidExpirationMinutes = ref(1440)
+const counterbidExpirationMinutes = ref(1440)
+
+// Keep track of original values for change detection
+const originalValues = ref({
+  maxTeamSize: 25,
+  initialBudget: 400,
+  bidExpirationMinutes: 1440,
+  counterbidExpirationMinutes: 1440,
+})
 
 const hasChanges = computed(() => {
-  return maxTeamSize.value !== originalMaxTeamSize.value
+  return (
+    maxTeamSize.value !== originalValues.value.maxTeamSize ||
+    initialBudget.value !== originalValues.value.initialBudget ||
+    bidExpirationMinutes.value !== originalValues.value.bidExpirationMinutes ||
+    counterbidExpirationMinutes.value !== originalValues.value.counterbidExpirationMinutes
+  )
 })
 
 const fetchSettings = async () => {
   try {
     const settingsDoc = await getDoc(doc(db, 'settings', 'general'))
     if (settingsDoc.exists()) {
-      const data = settingsDoc.data()
+      const data = settingsDoc.data() as Settings
       maxTeamSize.value = data.maxTeamSize
-      originalMaxTeamSize.value = data.maxTeamSize
+      initialBudget.value = data.initialBudget ?? 400
+      bidExpirationMinutes.value = data.bidExpirationMinutes ?? 1440
+      counterbidExpirationMinutes.value = data.counterbidExpirationMinutes ?? 1440
+
+      // Update original values
+      originalValues.value = {
+        maxTeamSize: data.maxTeamSize,
+        initialBudget: data.initialBudget ?? 400,
+        bidExpirationMinutes: data.bidExpirationMinutes ?? 1440,
+        counterbidExpirationMinutes: data.counterbidExpirationMinutes ?? 1440,
+      }
     } else {
       // Initialize settings if they don't exist
-      await setDoc(doc(db, 'settings', 'general'), {
+      const defaultSettings: Settings = {
         maxTeamSize: 25,
-      })
+        initialBudget: 400,
+        bidExpirationMinutes: 1440,
+        counterbidExpirationMinutes: 1440,
+      }
+      await setDoc(doc(db, 'settings', 'general'), defaultSettings)
+      originalValues.value = { ...defaultSettings }
     }
   } catch (err) {
     error.value = 'Error loading settings'
@@ -85,11 +174,17 @@ const saveSettings = async () => {
   if (!isAdmin.value) return
 
   try {
-    await setDoc(doc(db, 'settings', 'general'), {
+    const settings: Settings = {
       maxTeamSize: maxTeamSize.value,
-    })
+      initialBudget: initialBudget.value,
+      bidExpirationMinutes: bidExpirationMinutes.value,
+      counterbidExpirationMinutes: counterbidExpirationMinutes.value,
+    }
 
-    originalMaxTeamSize.value = maxTeamSize.value
+    await setDoc(doc(db, 'settings', 'general'), settings)
+
+    // Update original values
+    originalValues.value = { ...settings }
     success.value = 'Settings saved successfully'
 
     // Clear success message after 3 seconds
@@ -127,6 +222,14 @@ h1 {
 
 .settings-section {
   margin-top: 2rem;
+  padding-top: 2rem;
+  border-top: 1px solid #eee;
+}
+
+.settings-section:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
 }
 
 h2 {

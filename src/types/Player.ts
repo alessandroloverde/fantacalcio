@@ -6,4 +6,6 @@ export interface Player {
   role: string
   quotation: number
   currentBid?: Bid
+  paidPrice?: number
+  cost?: number
 }

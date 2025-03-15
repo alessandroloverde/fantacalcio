@@ -87,7 +87,7 @@
                 <div class="player-name">{{ player.name }}</div>
                 <div class="player-team">{{ player.team }}</div>
               </div>
-              <div class="player-cost">{{ player.cost }}M</div>
+              <div class="player-cost">{{ player.paidPrice || player.cost }}M</div>
             </div>
           </div>
         </div>
@@ -101,12 +101,13 @@
           </div>
           <div class="team-list">
             <div v-for="(player, index) in team" :key="index" class="player-card">
+              <div class="player-index">{{ index + 1 }}</div>
               <div class="player-role">{{ player.role }}</div>
               <div class="player-info">
                 <div class="player-name">{{ player.name }}</div>
                 <div class="player-team">{{ player.team }}</div>
               </div>
-              <div class="player-cost">{{ player.cost }}M</div>
+              <div class="player-cost">{{ player.paidPrice || player.cost }}M</div>
             </div>
           </div>
         </div>
@@ -127,7 +128,8 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
 import { useRoute } from 'vue-router'
-import { doc, getDoc, setDoc } from 'firebase/firestore'
+import { doc, getDoc, setDoc, collection } from 'firebase/firestore'
+import type { WithFieldValue, DocumentSnapshot, SnapshotOptions } from 'firebase/firestore'
 import { db } from '@/firebase'
 import type { Participant } from '@/utils/addParticipants'
 import type { Player } from '@/types/Player'
@@ -152,6 +154,23 @@ const logoError = ref('')
 const isCurrentUser = computed(() => participant.value?.email === authStore.user?.email)
 const isAdmin = computed(() => authStore.isAdmin)
 
+// Create a converter for Participant type
+const participantConverter = {
+  toFirestore: (participant: WithFieldValue<Participant>) => {
+    return participant
+  },
+  fromFirestore: (snapshot: DocumentSnapshot, options: SnapshotOptions) => {
+    const data = snapshot.data(options)
+    return {
+      id: snapshot.id,
+      ...data,
+    } as Participant
+  },
+}
+
+// Get a reference to the participants collection with the converter
+const participantsCollection = collection(db, 'participants').withConverter(participantConverter)
+
 const handleFileUpload = (event: Event) => {
   const input = event.target as HTMLInputElement
   if (input.files && input.files.length > 0) {
@@ -171,17 +190,18 @@ const importTeam = async () => {
 
     // Skip first two rows and process until row 26
     const teamData = lines.slice(2, 27).map((line) => {
-      const [role, name, team, cost] = line.split(',').map((item) => item.trim())
+      const [role, name, team, quotation] = line.split(',').map((item) => item.trim())
       return {
         role,
         name,
         team,
-        cost: parseFloat(cost) || 0,
+        quotation: parseFloat(quotation) || 0,
+        paidPrice: parseFloat(quotation) || 0, // Initialize paidPrice with quotation
       }
     })
 
     previewTeam.value = teamData.filter(
-      (player) => player.role && player.name && player.team && !isNaN(player.cost),
+      (player) => player.role && player.name && player.team && !isNaN(player.quotation),
     )
 
     if (previewTeam.value.length === 0) {
@@ -196,7 +216,8 @@ const importTeam = async () => {
 const acceptTeam = async () => {
   if (participant.value?.id) {
     try {
-      await setDoc(doc(db, 'participants', participant.value.id), {
+      const participantRef = doc(participantsCollection, participant.value.id)
+      await setDoc(participantRef, {
         ...participant.value,
         team: previewTeam.value,
       })
@@ -220,7 +241,8 @@ const cancelImport = () => {
 const clearTeam = async () => {
   if (participant.value?.id) {
     try {
-      await setDoc(doc(db, 'participants', participant.value.id), {
+      const participantRef = doc(participantsCollection, participant.value.id)
+      await setDoc(participantRef, {
         ...participant.value,
         team: [],
       })
@@ -277,10 +299,11 @@ const uploadLogo = async () => {
           team: currentParticipant.team,
           teamName: currentParticipant.teamName,
           logoData: base64String,
+          credits: currentParticipant.credits || 500,
         }
 
         // Update participant document
-        const participantRef = doc(db, 'participants', currentParticipant.id!)
+        const participantRef = doc(participantsCollection, currentParticipant.id!)
         await setDoc(participantRef, participantData)
 
         // Update local state
@@ -315,21 +338,22 @@ const removeLogo = async () => {
 
   try {
     // Create a new participant object without the logoData field
-    const participantData = {
+    const participantData: Participant = {
       name: currentParticipant.name,
       email: currentParticipant.email,
       role: currentParticipant.role,
       id: currentParticipant.id,
       team: currentParticipant.team,
       teamName: currentParticipant.teamName,
+      credits: currentParticipant.credits || 500,
     }
 
     // Update participant document
-    const participantRef = doc(db, 'participants', currentParticipant.id)
+    const participantRef = doc(participantsCollection, currentParticipant.id)
     await setDoc(participantRef, participantData)
 
     // Update local state
-    participant.value = participantData as Participant
+    participant.value = participantData
   } catch (err) {
     logoError.value = 'Error removing logo'
     console.error('Error removing logo:', err)
@@ -338,21 +362,27 @@ const removeLogo = async () => {
 
 const fetchParticipant = async () => {
   const participantId = route.params.id as string
+  console.log('Fetching participant with ID:', participantId)
 
   try {
-    const docRef = doc(db, 'participants', participantId)
+    // Create a document reference with the converter
+    const docRef = doc(db, 'participants', participantId).withConverter(participantConverter)
     const docSnap = await getDoc(docRef)
 
     if (docSnap.exists()) {
       const data = docSnap.data()
+      console.log('Raw participant data:', data)
 
-      participant.value = {
-        id: docSnap.id,
-        ...(docSnap.data() as Omit<Participant, 'id'>),
-      } as Participant & { id: string }
+      participant.value = data
       team.value = data.team || []
+
+      console.log('Team data:', team.value)
+      if (team.value.length > 0) {
+        console.log('First player data:', team.value[0])
+      }
     } else {
       error.value = 'Participant not found'
+      console.log('No participant found with ID:', participantId)
     }
   } catch (err) {
     error.value = 'Error fetching participant details'
@@ -511,6 +541,18 @@ onMounted(() => {
   background-color: #f8f9fa;
   border-radius: 4px;
   border: 1px solid #eee;
+}
+
+.player-index {
+  display: flex;
+  border-radius: 50%;
+  background-color: #606060;
+  color: white;
+  width: 2em;
+  height: 2em;
+  align-items: center;
+  justify-content: center;
+  margin-right: 10px;
 }
 
 .player-role {

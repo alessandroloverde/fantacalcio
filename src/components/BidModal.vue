@@ -72,7 +72,7 @@ const emit = defineEmits<{
 }>()
 
 const authStore = useAuthStore()
-const { maxTeamSize } = useSettings()
+const { maxTeamSize, bidExpirationMinutes } = useSettings()
 const bidAmount = ref(1)
 const replacedPlayer = ref<Player | null>(null)
 const bidError = ref('')
@@ -109,9 +109,9 @@ const handleSubmit = () => {
     return
   }
 
-  // Calculate expiration date (24 hours from now)
+  // Calculate expiration date using minutes
   const expiresAt = new Date()
-  expiresAt.setHours(expiresAt.getHours() + 24)
+  expiresAt.setMinutes(expiresAt.getMinutes() + bidExpirationMinutes.value)
 
   const bid: Omit<Bid, 'playerId'> = {
     bidderTeamName: authStore.participantData?.teamName || 'Unknown Team',
