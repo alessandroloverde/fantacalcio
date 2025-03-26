@@ -60,9 +60,34 @@
               v-if="authStore.participantData"
               @click="openBidModal(player)"
               class="bid-button"
+              :disabled="player.currentBid"
             >
-              Acquista
+              {{ player.currentBid ? 'In Asta' : 'Acquista' }}
             </button>
+          </div>
+        </div>
+      </div>
+
+      <div v-if="expiredBids.length > 0" class="expired-bids-section">
+        <h2>Expired Auctions</h2>
+        <div class="bids-grid">
+          <div v-for="bid in expiredBids" :key="bid.playerId" class="bid-card expired">
+            <div class="bid-status">Expired</div>
+            <div class="player-info">
+              <div class="player-name">{{ getPlayerName(bid.playerId) }}</div>
+              <div class="player-team">{{ getPlayerTeam(bid.playerId) }}</div>
+            </div>
+            <div class="bid-winner">Winner: {{ getParticipantName(bid.bidderParticipantId) }}</div>
+            <div class="bid-amount">{{ bid.amount }}M</div>
+          </div>
+        </div>
+      </div>
+
+      <div v-if="activeBids.length > 0" class="active-bids-section">
+        <h2>Active Auctions</h2>
+        <div class="bids-grid">
+          <div v-for="bid in activeBids" :key="bid.playerId" class="bid-card">
+            <!-- ... rest of the active bid card template ... -->
           </div>
         </div>
       </div>
@@ -85,20 +110,6 @@
       @confirm="confirmDeleteBid"
       @cancel="closeDeleteConfirmation"
     />
-
-    <AuctionCompletionModal
-      v-if="showAuctionCompletionModal && wonAuction"
-      :show="showAuctionCompletionModal"
-      :player="wonAuction.player"
-      :bid-amount="wonAuction.bidAmount"
-      :current-team="currentTeam"
-      :current-credits="authStore.participantData?.credits || 0"
-      :participant-id="authStore.participantData?.id || ''"
-      :initial-replacement="wonAuction.initialReplacement"
-      :auto-confirm-time="wonAuction.autoConfirmTime"
-      @close="showAuctionCompletionModal = false"
-      @completed="handleAuctionCompleted"
-    />
   </div>
 </template>
 
@@ -120,12 +131,12 @@ import {
 import { db } from '@/firebase'
 import type { Player } from '@/types/Player'
 import type { Bid } from '@/types/Bid'
+import type { Participant } from '@/utils/addParticipants'
 import { useAuthStore } from '@/stores/auth'
 import AppNavigation from '@/components/AppNavigation.vue'
 import BidModal from '@/components/BidModal.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
 import CountdownTimer from '@/components/CountdownTimer.vue'
-import AuctionCompletionModal from '@/components/AuctionCompletionModal.vue'
 
 defineOptions({
   name: 'MercatoView',
@@ -137,6 +148,8 @@ const fileInput = ref<HTMLInputElement | null>(null)
 const selectedFile = ref<File | null>(null)
 const error = ref('')
 const players = ref<Player[]>([])
+const bids = ref<Bid[]>([])
+const participants = ref<Participant[]>([])
 const roleFilter = ref('')
 const teamFilter = ref('')
 const searchQuery = ref('')
@@ -149,14 +162,6 @@ const availableCredits = ref(500) // Default budget, you might want to fetch thi
 // Add these refs for the confirmation dialog
 const showDeleteConfirmation = ref(false)
 const playerToDelete = ref<Player | null>(null)
-
-const showAuctionCompletionModal = ref(false)
-const wonAuction = ref<{
-  player: Player
-  bidAmount: number
-  initialReplacement?: Player
-  autoConfirmTime?: Date
-} | null>(null)
 
 // Computed properties for filters
 const uniqueRoles = computed(() => [...new Set(players.value.map((p) => p.role))].sort())
@@ -265,12 +270,16 @@ const handleBidSubmit = async (bidData: Omit<Bid, 'playerId'>) => {
     // Create bid object without undefined values
     const bidToSave = {
       playerId: selectedPlayer.value.name,
+      playerTeam: selectedPlayer.value.team,
+      playerRole: selectedPlayer.value.role,
+      playerQuotation: selectedPlayer.value.quotation,
       bidderTeamName: bidData.bidderTeamName,
       bidderParticipantId: bidData.bidderParticipantId,
       amount: bidData.amount,
       expiresAt: Timestamp.fromDate(bidData.expiresAt),
       createdAt: Timestamp.fromDate(bidData.createdAt),
       completed: false,
+      processed: false,
     }
 
     // Only add replacedPlayer if it exists
@@ -280,6 +289,19 @@ const handleBidSubmit = async (bidData: Omit<Bid, 'playerId'>) => {
 
     // Add bid to Firestore
     await addDoc(collection(db, 'bids'), bidToSave)
+
+    // Update the player in mercato to show it's in auction
+    const mercatoRef = doc(db, 'mercato', 'players')
+    const mercatoDoc = await getDoc(mercatoRef)
+    if (mercatoDoc.exists()) {
+      const currentPlayers = mercatoDoc.data().players || []
+      const updatedPlayers = currentPlayers.map((p: Player) =>
+        p.name === selectedPlayer.value?.name
+          ? { ...p, currentBid: { ...bidToSave, id: selectedPlayer.value.name } }
+          : p,
+      )
+      await updateDoc(mercatoRef, { players: updatedPlayers })
+    }
 
     // Fetch updated bids immediately
     await fetchActiveBids()
@@ -328,30 +350,26 @@ const fetchActiveBids = async () => {
       createdAt: doc.data().createdAt.toDate(),
     }))
 
+    // Update the bids ref
+    bids.value = allBids
+
     // Separate active and expired bids in memory
-    const activeBids = allBids.filter((bid) => bid.expiresAt > now.toDate())
-    const expiredBids = allBids.filter((bid) => bid.expiresAt <= now.toDate())
+    const expiredBidsData = allBids.filter((bid) => bid.expiresAt <= now.toDate())
 
     // Handle expired bids
-    for (const bid of expiredBids) {
-      if (bid.bidderParticipantId === authStore.participantData?.id) {
-        // Show completion modal for the winning participant
-        wonAuction.value = {
-          player: players.value.find((p) => p.name === bid.playerId)!,
-          bidAmount: bid.amount,
-          initialReplacement: bid.replacedPlayer,
-          autoConfirmTime: new Date(bid.expiresAt.getTime() + 12 * 60 * 60 * 1000), // 12 hours after bid expiration
-        }
-        showAuctionCompletionModal.value = true
-      }
-
-      // Mark bid as completed
-      await updateDoc(doc(db, 'bids', bid.id), { completed: true })
+    for (const bid of expiredBidsData) {
+      // Mark bid as completed and not processed
+      await updateDoc(doc(db, 'bids', bid.id), {
+        completed: true,
+        processed: false,
+      })
     }
 
     // Update players with their current bids
     players.value = players.value.map((player) => {
-      const currentBid = activeBids.find((bid) => bid.playerId === player.name)
+      const currentBid = allBids.find(
+        (bid) => bid.playerId === player.name && bid.expiresAt > now.toDate(),
+      )
       return {
         ...player,
         currentBid,
@@ -410,17 +428,52 @@ const closeDeleteConfirmation = () => {
   playerToDelete.value = null
 }
 
-const handleAuctionCompleted = () => {
-  showAuctionCompletionModal.value = false
-  wonAuction.value = null
-  fetchCurrentTeam()
-  fetchActiveBids()
+// Add fetchParticipants function
+const fetchParticipants = async () => {
+  try {
+    const querySnapshot = await getDocs(collection(db, 'participants'))
+    participants.value = querySnapshot.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+    }))
+  } catch (err) {
+    console.error('Error fetching participants:', err)
+  }
 }
 
+// Update the onMounted section
 // Update existing onMounted logic
 fetchPlayers()
 fetchCurrentTeam()
 fetchActiveBids()
+fetchParticipants()
+
+const expiredBids = computed(() => {
+  const now = Timestamp.now().toDate()
+  return bids.value.filter((bid) => bid.expiresAt < now)
+})
+
+const activeBids = computed(() => {
+  const now = Timestamp.now().toDate()
+  return bids.value.filter((bid) => bid.expiresAt >= now)
+})
+
+// Add a method to get participant name by ID
+const getParticipantName = (participantId: string) => {
+  const participant = participants.value.find((p) => p.id === participantId)
+  return participant?.teamName || participant?.name || 'Unknown'
+}
+
+// Add functions to get player details
+const getPlayerName = (playerId: string) => {
+  const player = players.value.find((p) => p.name === playerId)
+  return player?.name || 'Unknown'
+}
+
+const getPlayerTeam = (playerId: string) => {
+  const player = players.value.find((p) => p.name === playerId)
+  return player?.team || 'Unknown'
+}
 </script>
 
 <style scoped>
@@ -606,5 +659,26 @@ fetchActiveBids()
 
 .delete-bid-button:hover {
   background-color: #c82333;
+}
+
+.expired-bids-section {
+  margin-top: 2rem;
+}
+
+.bid-card.expired {
+  background-color: #f8f9fa;
+  opacity: 0.8;
+}
+
+.bid-status {
+  font-weight: 500;
+  color: #dc3545;
+  margin-bottom: 0.5rem;
+}
+
+.bid-winner {
+  font-size: 0.9rem;
+  color: #28a745;
+  margin-top: 0.5rem;
 }
 </style>

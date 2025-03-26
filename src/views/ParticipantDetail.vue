@@ -57,6 +57,33 @@
 
       <div class="team-section">
         <h2>Team</h2>
+
+        <!-- Add auction won notification box -->
+        <div v-if="showAuctionNotification" class="auction-notification">
+          <div class="notification-header">
+            <h3>Auction Won! 🎉</h3>
+            <button class="close-button" @click="showAuctionNotification = false">&times;</button>
+          </div>
+          <div class="notification-content">
+            <div class="player-info">
+              <div class="player-name">{{ auctionPlayer?.name }}</div>
+              <div class="player-details">
+                <span class="player-role">{{ auctionPlayer?.role }}</span>
+                <span class="player-team">{{ auctionPlayer?.team }}</span>
+                <span class="player-cost">{{ auctionBidAmount }}M</span>
+              </div>
+            </div>
+            <div class="credits-info">
+              <p>Cost: {{ auctionBidAmount }}M</p>
+              <p>Current Credits: {{ participant?.credits || 500 }}M</p>
+              <p>Remaining Credits: {{ (participant?.credits || 500) - auctionBidAmount }}M</p>
+            </div>
+            <div class="notification-actions">
+              <button class="confirm-button" @click="handleAuctionConfirm">Confirm Purchase</button>
+            </div>
+          </div>
+        </div>
+
         <div v-if="isAdmin" class="team-import">
           <input
             type="file"
@@ -81,7 +108,7 @@
             </div>
           </div>
           <div class="team-list preview-list">
-            <div v-for="(player, index) in previewTeam" :key="index" class="player-card">
+            <div v-for="(player, index) in sortedPreviewTeam" :key="index" class="player-card">
               <div class="player-role">{{ player.role }}</div>
               <div class="player-info">
                 <div class="player-name">{{ player.name }}</div>
@@ -101,7 +128,7 @@
           </div>
           <div class="team-list">
             <div
-              v-for="(player, index) in team"
+              v-for="(player, index) in sortedTeam"
               :key="index"
               class="player-card"
               :class="`role-${player.role}`"
@@ -133,7 +160,17 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
 import { useRoute } from 'vue-router'
-import { doc, getDoc, setDoc, collection } from 'firebase/firestore'
+import {
+  doc,
+  getDoc,
+  setDoc,
+  collection,
+  query,
+  where,
+  getDocs,
+  updateDoc,
+  Timestamp,
+} from 'firebase/firestore'
 import type { WithFieldValue, DocumentSnapshot, SnapshotOptions } from 'firebase/firestore'
 import { db } from '@/firebase'
 import type { Participant } from '@/utils/addParticipants'
@@ -156,8 +193,35 @@ const logoInput = ref<HTMLInputElement | null>(null)
 const selectedLogo = ref<File | null>(null)
 const logoError = ref('')
 
+// Replace showAuctionCompletionModal with showAuctionNotification
+const showAuctionNotification = ref(false)
+
+// Add new refs for auction completion
+const auctionPlayer = ref<Player | null>(null)
+const auctionBidAmount = ref(0)
+
 const isCurrentUser = computed(() => participant.value?.email === authStore.user?.email)
 const isAdmin = computed(() => authStore.isAdmin)
+
+// Add the role order map and sorted team computed property
+const roleOrder: { [key: string]: number } = {
+  P: 1,
+  D: 2,
+  C: 3,
+  A: 4,
+}
+
+const sortedTeam = computed(() => {
+  return [...team.value].sort((a, b) => {
+    return (roleOrder[a.role] || 0) - (roleOrder[b.role] || 0)
+  })
+})
+
+const sortedPreviewTeam = computed(() => {
+  return [...previewTeam.value].sort((a, b) => {
+    return (roleOrder[a.role] || 0) - (roleOrder[b.role] || 0)
+  })
+})
 
 // Create a converter for Participant type
 const participantConverter = {
@@ -381,6 +445,9 @@ const fetchParticipant = async () => {
       participant.value = data
       team.value = data.team || []
 
+      // Check for expired bids that need completion
+      await checkExpiredBids()
+
       console.log('Team data:', team.value)
       if (team.value.length > 0) {
         console.log('First player data:', team.value[0])
@@ -394,6 +461,200 @@ const fetchParticipant = async () => {
     console.error('Error fetching participant:', err)
   } finally {
     loading.value = false
+  }
+}
+
+const checkExpiredBids = async () => {
+  console.log('Checking expired bids...')
+  const now = new Date()
+
+  try {
+    // Query for expired, unprocessed bids where this participant is the winner
+    const bidsRef = collection(db, 'bids')
+    const q = query(
+      bidsRef,
+      where('bidderParticipantId', '==', route.params.id),
+      where('expiresAt', '<=', Timestamp.fromDate(now)),
+      where('processed', '==', false),
+    )
+
+    const querySnapshot = await getDocs(q)
+    console.log('Found expired bids:', querySnapshot.docs.length)
+
+    for (const docSnapshot of querySnapshot.docs) {
+      const bid = docSnapshot.data()
+      console.log('Processing bid:', bid)
+
+      // Create won player object directly from bid data
+      const wonPlayer = {
+        name: bid.playerId,
+        team: bid.playerTeam,
+        role: bid.playerRole,
+        quotation: bid.playerQuotation,
+        cost: bid.amount,
+        paidPrice: bid.amount,
+      }
+
+      console.log('Won player:', wonPlayer)
+
+      // Set notification data
+      auctionPlayer.value = wonPlayer
+      auctionBidAmount.value = bid.amount
+      showAuctionNotification.value = true
+
+      // Mark bid as processed
+      await updateDoc(docSnapshot.ref, { processed: true })
+
+      // Update mercato to remove the player's currentBid
+      const mercatoRef = doc(db, 'mercato', 'players')
+      const mercatoDoc = await getDoc(mercatoRef)
+      if (mercatoDoc.exists()) {
+        const currentPlayers = mercatoDoc.data().players || []
+        const updatedPlayers = currentPlayers.map((p: Player) =>
+          p.name === bid.playerId ? { ...p, currentBid: null } : p,
+        )
+        await updateDoc(mercatoRef, { players: updatedPlayers })
+      }
+
+      // Add player to participant's team
+      const participantRef = doc(db, 'participants', route.params.id as string)
+      const participantDoc = await getDoc(participantRef)
+      if (participantDoc.exists()) {
+        const currentPlayers = participantDoc.data().players || []
+        if (bid.replacedPlayer) {
+          // Remove replaced player if exists
+          const updatedPlayers = currentPlayers
+            .filter((p: Player) => p.name !== bid.replacedPlayer.name)
+            .concat([wonPlayer])
+          await updateDoc(participantRef, { players: updatedPlayers })
+        } else {
+          await updateDoc(participantRef, {
+            players: [...currentPlayers, wonPlayer],
+          })
+        }
+      }
+
+      // Only process one bid at a time
+      break
+    }
+  } catch (err) {
+    console.error('Error checking expired bids:', err)
+    if (err instanceof Error && err.message.includes('requires an index')) {
+      console.log('Waiting for index to be created...')
+      // The error is expected until the index is created
+      // We'll just continue without showing an error to the user
+      return
+    }
+    error.value = 'Error checking expired bids'
+  }
+}
+
+// Add handleAuctionConfirm function
+const handleAuctionConfirm = async () => {
+  if (!auctionPlayer.value || !participant.value?.id) return
+
+  try {
+    const participantRef = doc(participantsCollection, participant.value.id)
+    const mercatoRef = doc(db, 'mercato', 'players')
+
+    // Create player object with bid amount, ensuring all fields are defined
+    const playerWithPrice: Player = {
+      name: auctionPlayer.value.name,
+      team: auctionPlayer.value.team,
+      role: auctionPlayer.value.role,
+      quotation: auctionPlayer.value.quotation || 0,
+      paidPrice: auctionBidAmount.value,
+    }
+
+    // Get current mercato state
+    const mercatoDoc = await getDoc(mercatoRef)
+    if (!mercatoDoc.exists()) {
+      throw new Error('Mercato document not found')
+    }
+
+    // Get the current team and handle player replacement
+    const currentTeam = [...team.value]
+    const bidsRef = collection(db, 'bids')
+    const q = query(
+      bidsRef,
+      where('playerId', '==', auctionPlayer.value.name),
+      where('bidderParticipantId', '==', participant.value.id),
+      where('processed', '==', true),
+    )
+    const querySnapshot = await getDocs(q)
+    const bid = querySnapshot.docs[0]?.data()
+
+    // Get current mercato players and ensure they are valid
+    const currentMercatoPlayers = mercatoDoc.data().players || []
+    const validMercatoPlayers = currentMercatoPlayers.filter(
+      (p: Player) => p && p.name && p.team && p.role,
+    )
+
+    let updatedTeam
+    // Remove the won player from mercato
+    const updatedMercatoPlayers = validMercatoPlayers.filter(
+      (p: Player) => p.name !== auctionPlayer.value?.name,
+    )
+
+    if (bid?.replacedPlayer) {
+      // Remove the replaced player from team and add the new one
+      updatedTeam = currentTeam
+        .filter((p: Player) => p.name !== bid.replacedPlayer.name)
+        .concat([playerWithPrice])
+
+      // Add replaced player back to mercato with all required fields
+      const replacedPlayer = {
+        name: bid.replacedPlayer.name,
+        team: bid.replacedPlayer.team,
+        role: bid.replacedPlayer.role,
+        quotation: bid.replacedPlayer.quotation || 0,
+        currentBid: null,
+      }
+      updatedMercatoPlayers.push(replacedPlayer)
+    } else {
+      // Just add the new player
+      updatedTeam = [...currentTeam, playerWithPrice]
+    }
+
+    // Update mercato first, ensuring all players have required fields
+    await updateDoc(mercatoRef, {
+      players: updatedMercatoPlayers.map((p) => ({
+        name: p.name,
+        team: p.team,
+        role: p.role,
+        quotation: p.quotation || 0,
+        currentBid: p.currentBid || null,
+      })),
+    })
+
+    // Update participant document
+    await updateDoc(participantRef, {
+      team: updatedTeam,
+      credits: (participant.value.credits || 500) - auctionBidAmount.value,
+    })
+
+    // Mark all related bids as processed
+    const allBidsQuery = query(
+      bidsRef,
+      where('playerId', '==', auctionPlayer.value.name),
+      where('bidderParticipantId', '==', participant.value.id),
+    )
+    const allBidsSnapshot = await getDocs(allBidsQuery)
+    const updatePromises = allBidsSnapshot.docs.map((doc) =>
+      updateDoc(doc.ref, { processed: true, completed: true }),
+    )
+    await Promise.all(updatePromises)
+
+    // Update local state
+    team.value = updatedTeam
+    if (participant.value) {
+      participant.value.credits = (participant.value.credits || 500) - auctionBidAmount.value
+    }
+
+    // Hide notification
+    showAuctionNotification.value = false
+  } catch (error) {
+    console.error('Error updating team:', error)
   }
 }
 
@@ -581,6 +842,8 @@ onMounted(() => {
 
 .player-info {
   flex: 1;
+  display: flex;
+  align-items: center;
 }
 
 .player-name {
@@ -755,5 +1018,86 @@ h3 {
   color: #dc3545;
   margin-top: 0.5rem;
   font-size: 0.9rem;
+}
+
+.auction-notification {
+  background-color: #fff;
+  border: 1px solid #4caf50;
+  border-radius: 8px;
+  margin-bottom: 2rem;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.notification-header {
+  background-color: #4caf50;
+  color: white;
+  padding: 1rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-top-left-radius: 8px;
+  border-top-right-radius: 8px;
+}
+
+.notification-header h3 {
+  margin: 0;
+  color: white;
+}
+
+.close-button {
+  background: none;
+  border: none;
+  color: white;
+  font-size: 1.5rem;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+}
+
+.notification-content {
+  padding: 1rem;
+}
+
+.player-name {
+  font-size: 1.2rem;
+  font-weight: 500;
+  margin-right: 1.5em;
+}
+
+.player-details {
+  display: flex;
+  gap: 1rem;
+  color: #666;
+}
+
+.credits-info {
+  background-color: #f8f9fa;
+  padding: 1rem;
+  border-radius: 4px;
+  margin-bottom: 1rem;
+}
+
+.credits-info p {
+  margin: 0.5rem 0;
+  color: #333;
+}
+
+.notification-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.confirm-button {
+  padding: 0.5rem 1rem;
+  background-color: #4caf50;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.confirm-button:hover {
+  background-color: #45a049;
 }
 </style>
