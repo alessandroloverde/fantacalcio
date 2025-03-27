@@ -32,6 +32,7 @@
               </div>
             </div>
             <h2>{{ participant.teamName }}</h2>
+            <h3>crediti: {{ participant.credits }}</h3>
           </div>
           <div v-if="isCurrentUser || isAdmin" class="logo-upload">
             <input
@@ -109,12 +110,12 @@
           </div>
           <div class="team-list preview-list">
             <div v-for="(player, index) in sortedPreviewTeam" :key="index" class="player-card">
-              <div class="player-role">{{ player.role }}</div>
-              <div class="player-info">
+              <section class="player-role">{{ player.role }}</section>
+              <section class="player-info">
                 <div class="player-name">{{ player.name }}</div>
                 <div class="player-team">{{ player.team }}</div>
-              </div>
-              <div class="player-cost">{{ player.paidPrice || player.cost }}M</div>
+              </section>
+              <section class="player-cost">{{ player.paidPrice || player.cost }}M</section>
             </div>
           </div>
         </div>
@@ -616,34 +617,42 @@ const handleAuctionConfirm = async () => {
       updatedTeam = [...currentTeam, playerWithPrice]
     }
 
-    // Update mercato first, ensuring all players have required fields
-    await updateDoc(mercatoRef, {
-      players: updatedMercatoPlayers.map((p) => ({
-        name: p.name,
-        team: p.team,
-        role: p.role,
-        quotation: p.quotation || 0,
-        currentBid: p.currentBid || null,
-      })),
+    // Update mercato first with a simpler structure
+    const mercatoPlayers = updatedMercatoPlayers.map((p: Player) => ({
+      name: p.name,
+      team: p.team,
+      role: p.role,
+      quotation: Number(p.quotation) || 0,
+      currentBid: null,
+    }))
+    await setDoc(mercatoRef, { players: mercatoPlayers })
+
+    // Update participant with a simpler structure
+    const teamPlayers = updatedTeam.map((p) => ({
+      name: p.name,
+      team: p.team,
+      role: p.role,
+      quotation: Number(p.quotation) || 0,
+      paidPrice: Number(p.paidPrice) || 0,
+    }))
+    await setDoc(participantRef, {
+      ...participant.value,
+      team: teamPlayers,
+      credits: (participant.value?.credits || 500) - auctionBidAmount.value,
     })
 
-    // Update participant document
-    await updateDoc(participantRef, {
-      team: updatedTeam,
-      credits: (participant.value.credits || 500) - auctionBidAmount.value,
-    })
-
-    // Mark all related bids as processed
+    // Mark bids as processed with a simple update
     const allBidsQuery = query(
       bidsRef,
       where('playerId', '==', auctionPlayer.value.name),
       where('bidderParticipantId', '==', participant.value.id),
     )
     const allBidsSnapshot = await getDocs(allBidsQuery)
-    const updatePromises = allBidsSnapshot.docs.map((doc) =>
-      updateDoc(doc.ref, { processed: true, completed: true }),
+    await Promise.all(
+      allBidsSnapshot.docs.map((doc) =>
+        setDoc(doc.ref, { ...doc.data(), processed: true, completed: true }),
+      ),
     )
-    await Promise.all(updatePromises)
 
     // Update local state
     team.value = updatedTeam
