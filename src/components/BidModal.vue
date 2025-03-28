@@ -8,14 +8,25 @@
 
       <div class="modal-body">
         <div class="bid-info">
-          <p><strong>Player:</strong> {{ player.name }} ({{ player.team }}) - {{ player.role }}</p>
-          <p><strong>Quotation:</strong> {{ player.quotation }}M</p>
-          <p><strong>Your Credits:</strong> {{ availableCredits }}M</p>
+          <p>
+            <strong>Player:</strong>
+            {{ player.name }} ({{ player.team }}) - {{ player.role }}
+          </p>
+          <p>
+            <strong>Quotation:</strong>
+            {{ player.quotation }}M
+          </p>
+          <p>
+            <strong>Your Credits:</strong>
+            {{ availableCredits }}M
+          </p>
         </div>
 
         <div class="bid-form">
           <div class="form-group">
-            <label for="bidAmount">Bid Amount (M):</label>
+            <label for="bidAmount" :class="{ valid: isValid, 'textWarning--inline': !isValid }">
+              Bid Amount (M):
+            </label>
             <input
               type="number"
               id="bidAmount"
@@ -29,9 +40,9 @@
           <div class="form-group" v-if="currentTeam.length > 0">
             <label for="replacedPlayer">
               Replace Player
-              <span v-if="needsReplacement" class="required"
-                >(Required - Team at maximum size of {{ maxTeamSize }})</span
-              >
+              <span v-if="needsReplacement" class="required">
+                (Required - Team at maximum size of {{ maxTeamSize }})
+              </span>
               <span v-else>(Optional)</span>
             </label>
             <select id="replacedPlayer" v-model="replacedPlayer" :required="needsReplacement">
@@ -63,7 +74,6 @@ const props = defineProps<{
   show: boolean
   player: Player
   currentTeam: Player[]
-  availableCredits: number
 }>()
 
 const emit = defineEmits<{
@@ -77,13 +87,14 @@ const bidAmount = ref(1)
 const replacedPlayer = ref<Player | null>(null)
 const bidError = ref('')
 const replacementError = ref('')
+const availableCredits = authStore.participantData?.credits || 0
 
 const needsReplacement = computed(() => {
   return props.currentTeam.length >= maxTeamSize.value
 })
 
 const isValid = computed(() => {
-  if (bidAmount.value < 1 || bidAmount.value > props.availableCredits) return false
+  if (bidAmount.value < 1 || bidAmount.value > availableCredits) return false
   if (needsReplacement.value && !replacedPlayer.value) return false
   return true
 })
@@ -98,8 +109,8 @@ const closeModal = () => {
 
 const handleSubmit = () => {
   // Validate bid amount
-  if (bidAmount.value < 1 || bidAmount.value > props.availableCredits) {
-    bidError.value = `Bid must be between 1 and ${props.availableCredits}M`
+  if (bidAmount.value < 1 || bidAmount.value > availableCredits) {
+    bidError.value = `Bid must be between 1 and ${availableCredits}M`
     return
   }
 
