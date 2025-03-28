@@ -128,6 +128,25 @@
             </button>
           </div>
           <div class="team-list">
+            <section class="team-info">
+              <div class="team-info--totalPlayers">
+                Numero di giocatori:
+                <span
+                  :class="
+                    sortedTeam.length > useSettings().maxTeamSize.value ? 'textWarning--inline' : ''
+                  "
+                >
+                  {{ sortedTeam.length }}
+                </span>
+              </div>
+              <div class="team-info--playersByRole">
+                <span>P: {{ sortedTeam.filter((player) => player.role === 'P').length }}</span>
+                <span>D: {{ sortedTeam.filter((player) => player.role === 'D').length }}</span>
+                <span>C: {{ sortedTeam.filter((player) => player.role === 'C').length }}</span>
+                <span>A: {{ sortedTeam.filter((player) => player.role === 'A').length }}</span>
+              </div>
+            </section>
+
             <div
               v-for="(player, index) in sortedTeam"
               :key="index"
@@ -178,6 +197,7 @@ import type { Participant } from '@/utils/addParticipants'
 import type { Player } from '@/types/Player'
 import { useAuthStore } from '@/stores/auth'
 import ConfirmModal from '@/components/ConfirmModal.vue'
+import { useSettings } from '@/composables/useSettings'
 
 const route = useRoute()
 const authStore = useAuthStore()
@@ -926,6 +946,17 @@ h3 {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 1rem;
+}
+.team-info {
+  background-color: #e0dede;
+  border-radius: 8px;
+  box-shadow: 2px 4px rgba(0, 0, 0, 0.1);
+  padding: 2rem;
+  display: flex;
+  justify-content: space-between;
+}
+.team-info--playersByRole > span {
+  margin-left: 0.5em;
 }
 
 .preview-actions {

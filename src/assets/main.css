@@ -19,3 +19,13 @@ a,
     background-color: hsla(160, 100%, 37%, 0.2);
   }
 }
+
+.textWarning--inline {
+  color: red;
+}
+
+.textWarning--inline:after {
+  content: '⚠️';
+  display: inline-block;
+  margin: auto 0.5em;
+}
