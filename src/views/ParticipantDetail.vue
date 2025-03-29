@@ -79,6 +79,37 @@
               <p>Current Credits: {{ participant?.credits || 500 }}M</p>
               <p>Remaining Credits: {{ (participant?.credits || 500) - auctionBidAmount }}M</p>
             </div>
+
+            <div v-if="replacementNeeded" class="replacement-section">
+              <h3>Player Replacement Required</h3>
+              <p class="info-text">
+                Your team is at maximum capacity. Please select a player to replace or confirm your
+                previous choice.
+              </p>
+              <p class="time-info">
+                You have {{ formattedTimeLeft }} to make your choice, or your initial selection will
+                be confirmed automatically.
+              </p>
+
+              <div class="form-group">
+                <label for="replacementPlayer">Select Player to Replace:</label>
+                <select id="replacementPlayer" v-model="selectedReplacement">
+                  <option value="">Select a player</option>
+                  <option
+                    v-for="teamPlayer in currentTeam"
+                    :key="teamPlayer.name"
+                    :value="teamPlayer"
+                    :selected="teamPlayer.name === initialReplacement?.name"
+                  >
+                    {{ teamPlayer.name }} ({{ teamPlayer.role }})
+                  </option>
+                </select>
+              </div>
+
+              <div v-if="initialReplacement" class="initial-choice">
+                <p>Initial choice to replace: {{ initialReplacement.name }}</p>
+              </div>
+            </div>
             <div class="notification-actions">
               <button class="confirm-button" @click="handleAuctionConfirm">Confirm Purchase</button>
             </div>
@@ -220,6 +251,27 @@ const showAuctionNotification = ref(false)
 // Add new refs for auction completion
 const auctionPlayer = ref<Player | null>(null)
 const auctionBidAmount = ref(0)
+const selectedReplacement = ref<Player | null>(null)
+const initialReplacement = ref<Player | null>(null)
+const currentTeam = computed(() => team.value)
+const timeLeft = ref<number>(12 * 60 * 60 * 1000) // 12 hours in milliseconds
+
+const formattedTimeLeft = computed(() => {
+  const hours = Math.floor(timeLeft.value / (60 * 60 * 1000))
+  const minutes = Math.floor((timeLeft.value % (60 * 60 * 1000)) / (60 * 1000))
+  return `${hours}h ${minutes}m`
+})
+
+// Start timer when auction is won
+const startReplacementTimer = () => {
+  const timer = setInterval(() => {
+    timeLeft.value -= 1000
+    if (timeLeft.value <= 0) {
+      clearInterval(timer)
+      handleAuctionConfirm()
+    }
+  }, 1000)
+}
 
 const isCurrentUser = computed(() => participant.value?.email === authStore.user?.email)
 const isAdmin = computed(() => authStore.isAdmin)
@@ -242,6 +294,10 @@ const sortedPreviewTeam = computed(() => {
   return [...previewTeam.value].sort((a, b) => {
     return (roleOrder[a.role] || 0) - (roleOrder[b.role] || 0)
   })
+})
+
+const replacementNeeded = computed(() => {
+  return team.value.length >= useSettings().maxTeamSize.value
 })
 
 // Create a converter for Participant type
@@ -523,6 +579,14 @@ const checkExpiredBids = async () => {
       auctionBidAmount.value = bid.amount
       showAuctionNotification.value = true
 
+      // Initialize replacement if needed
+      if (team.value.length >= useSettings().maxTeamSize.value) {
+        initialReplacement.value = bid.replacedPlayer || null
+        selectedReplacement.value = initialReplacement.value
+        timeLeft.value = 12 * 60 * 60 * 1000 // Reset timer to 12 hours
+        startReplacementTimer()
+      }
+
       // Mark bid as processed
       await updateDoc(docSnapshot.ref, { processed: true })
 
@@ -617,18 +681,21 @@ const handleAuctionConfirm = async () => {
       (p: Player) => p.name !== auctionPlayer.value?.name,
     )
 
-    if (bid?.replacedPlayer) {
+    // Use selectedReplacement if available, otherwise use the bid's replacedPlayer
+    const playerToReplace = selectedReplacement.value || bid?.replacedPlayer
+
+    if (playerToReplace) {
       // Remove the replaced player from team and add the new one
       updatedTeam = currentTeam
-        .filter((p: Player) => p.name !== bid.replacedPlayer.name)
+        .filter((p: Player) => p.name !== playerToReplace.name)
         .concat([playerWithPrice])
 
       // Add replaced player back to mercato with all required fields
       const replacedPlayer = {
-        name: bid.replacedPlayer.name,
-        team: bid.replacedPlayer.team,
-        role: bid.replacedPlayer.role,
-        quotation: bid.replacedPlayer.quotation || 0,
+        name: playerToReplace.name,
+        team: playerToReplace.team,
+        role: playerToReplace.role,
+        quotation: playerToReplace.quotation || 0,
         currentBid: null,
       }
       updatedMercatoPlayers.push(replacedPlayer)
