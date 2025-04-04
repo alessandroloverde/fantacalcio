@@ -162,11 +162,7 @@
             <section class="team-info">
               <div class="team-info--totalPlayers">
                 Numero di giocatori:
-                <span
-                  :class="
-                    sortedTeam.length > useSettings().maxTeamSize.value ? 'textWarning--inline' : ''
-                  "
-                >
+                <span :class="isTeamFull ? 'textWarning--inline' : ''">
                   {{ sortedTeam.length }}
                 </span>
               </div>
@@ -209,7 +205,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import {
   doc,
@@ -232,6 +228,7 @@ import { useSettings } from '@/composables/useSettings'
 
 const route = useRoute()
 const authStore = useAuthStore()
+const { maxTeamSize, auctionConfirmationMinutes } = useSettings()
 const loading = ref(true)
 const error = ref('')
 const importError = ref('')
@@ -254,7 +251,8 @@ const auctionBidAmount = ref(0)
 const selectedReplacement = ref<Player | null>(null)
 const initialReplacement = ref<Player | null>(null)
 const currentTeam = computed(() => team.value)
-const timeLeft = ref<number>(12 * 60 * 60 * 1000) // 12 hours in milliseconds
+const timeLeft = ref<number>(0)
+const timerInterval = ref<number | null>(null)
 
 const formattedTimeLeft = computed(() => {
   const hours = Math.floor(timeLeft.value / (60 * 60 * 1000))
@@ -264,14 +262,35 @@ const formattedTimeLeft = computed(() => {
 
 // Start timer when auction is won
 const startReplacementTimer = () => {
-  const timer = setInterval(() => {
+  // Clear any existing timer
+  if (timerInterval.value) {
+    clearInterval(timerInterval.value)
+  }
+
+  timerInterval.value = window.setInterval(() => {
     timeLeft.value -= 1000
     if (timeLeft.value <= 0) {
-      clearInterval(timer)
+      if (timerInterval.value) {
+        clearInterval(timerInterval.value)
+        timerInterval.value = null
+      }
       handleAuctionConfirm()
     }
   }, 1000)
 }
+
+// Add cleanup function
+const cleanupTimer = () => {
+  if (timerInterval.value) {
+    clearInterval(timerInterval.value)
+    timerInterval.value = null
+  }
+}
+
+// Cleanup on component unmount
+onUnmounted(() => {
+  cleanupTimer()
+})
 
 const isCurrentUser = computed(() => participant.value?.email === authStore.user?.email)
 const isAdmin = computed(() => authStore.isAdmin)
@@ -297,8 +316,10 @@ const sortedPreviewTeam = computed(() => {
 })
 
 const replacementNeeded = computed(() => {
-  return team.value.length >= useSettings().maxTeamSize.value
+  return team.value.length >= maxTeamSize.value
 })
+
+const isTeamFull = computed(() => sortedTeam.value.length >= maxTeamSize.value)
 
 // Create a converter for Participant type
 const participantConverter = {
@@ -545,104 +566,105 @@ const checkExpiredBids = async () => {
   console.log('Checking expired bids...')
   const now = new Date()
 
+  // Clean up any existing timer
+  cleanupTimer()
+
   try {
-    // Query for expired, unprocessed bids where this participant is the winner
+    // Query for unprocessed bids
     const bidsRef = collection(db, 'bids')
     const q = query(
       bidsRef,
       where('bidderParticipantId', '==', route.params.id),
-      where('expiresAt', '<=', Timestamp.fromDate(now)),
       where('processed', '==', false),
     )
 
     const querySnapshot = await getDocs(q)
-    console.log('Found expired bids:', querySnapshot.docs.length)
+    console.log('Found pending bids:', querySnapshot.docs.length)
 
-    for (const docSnapshot of querySnapshot.docs) {
-      const bid = docSnapshot.data()
-      console.log('Processing bid:', bid)
-
-      // Create won player object directly from bid data
-      const wonPlayer = {
-        name: bid.playerId,
-        team: bid.playerTeam,
-        role: bid.playerRole,
-        quotation: bid.playerQuotation,
-        cost: bid.amount,
-        paidPrice: bid.amount,
-      }
-
-      console.log('Won player:', wonPlayer)
-
-      // Set notification data
-      auctionPlayer.value = wonPlayer
-      auctionBidAmount.value = bid.amount
-      showAuctionNotification.value = true
-
-      // Initialize replacement if needed
-      if (team.value.length >= useSettings().maxTeamSize.value) {
-        initialReplacement.value = bid.replacedPlayer || null
-        selectedReplacement.value = initialReplacement.value
-        timeLeft.value = 12 * 60 * 60 * 1000 // Reset timer to 12 hours
-        startReplacementTimer()
-      }
-
-      // Mark bid as processed
-      await updateDoc(docSnapshot.ref, { processed: true })
-
-      // Update mercato to remove the player's currentBid
-      const mercatoRef = doc(db, 'mercato', 'players')
-      const mercatoDoc = await getDoc(mercatoRef)
-      if (mercatoDoc.exists()) {
-        const currentPlayers = mercatoDoc.data().players || []
-        const updatedPlayers = currentPlayers.map((p: Player) =>
-          p.name === bid.playerId ? { ...p, currentBid: null } : p,
-        )
-        await updateDoc(mercatoRef, { players: updatedPlayers })
-      }
-
-      // Add player to participant's team
-      const participantRef = doc(db, 'participants', route.params.id as string)
-      const participantDoc = await getDoc(participantRef)
-      if (participantDoc.exists()) {
-        const currentPlayers = participantDoc.data().players || []
-        if (bid.replacedPlayer) {
-          // Remove replaced player if exists
-          const updatedPlayers = currentPlayers
-            .filter((p: Player) => p.name !== bid.replacedPlayer.name)
-            .concat([wonPlayer])
-          await updateDoc(participantRef, { players: updatedPlayers })
-        } else {
-          await updateDoc(participantRef, {
-            players: [...currentPlayers, wonPlayer],
-          })
-        }
-      }
-
-      // Only process one bid at a time
-      break
-    }
-  } catch (err) {
-    console.error('Error checking expired bids:', err)
-    if (err instanceof Error && err.message.includes('requires an index')) {
-      console.log('Waiting for index to be created...')
-      // The error is expected until the index is created
-      // We'll just continue without showing an error to the user
+    // Find the first unprocessed and uncompleted bid
+    const uncompletedBid = querySnapshot.docs.find((doc) => !doc.data().completed)
+    if (!uncompletedBid) {
+      console.log('No uncompleted bids found')
       return
     }
-    error.value = 'Error checking expired bids'
+
+    const bid = uncompletedBid.data()
+    console.log('Processing uncompleted bid:', bid)
+
+    // Create won player object directly from bid data
+    const wonPlayer = {
+      name: bid.playerId,
+      team: bid.playerTeam,
+      role: bid.playerRole,
+      quotation: bid.playerQuotation,
+      cost: bid.amount,
+      paidPrice: bid.amount,
+    }
+
+    console.log('Won player:', wonPlayer)
+
+    // Always set up notification data first
+    auctionPlayer.value = wonPlayer
+    auctionBidAmount.value = bid.amount
+    showAuctionNotification.value = true
+
+    // Initialize replacement if needed
+    if (team.value.length >= maxTeamSize.value) {
+      initialReplacement.value = bid.replacedPlayer || null
+      selectedReplacement.value = initialReplacement.value
+    }
+
+    // Handle expiration time
+    const confirmationTimeMs = auctionConfirmationMinutes.value * 60 * 1000
+    let expiresAt: Date
+
+    if (bid.expiresAt) {
+      expiresAt = bid.expiresAt.toDate()
+      const timeRemaining = expiresAt.getTime() - now.getTime()
+
+      // If time has expired or no time was set, create a new expiration time
+      if (timeRemaining <= 0) {
+        expiresAt = new Date(now.getTime() + confirmationTimeMs)
+        console.log('Setting new expiration time:', expiresAt)
+        await updateDoc(uncompletedBid.ref, {
+          expiresAt: Timestamp.fromDate(expiresAt),
+        })
+      }
+    } else {
+      // If no expiresAt, set new timer
+      expiresAt = new Date(now.getTime() + confirmationTimeMs)
+      console.log('Setting new expiration time:', expiresAt)
+      await updateDoc(uncompletedBid.ref, {
+        expiresAt: Timestamp.fromDate(expiresAt),
+      })
+    }
+
+    // Set the time remaining and start the timer
+    timeLeft.value = expiresAt.getTime() - now.getTime()
+    console.log('Starting timer with duration:', timeLeft.value)
+    startReplacementTimer()
+  } catch (err) {
+    console.error('Error checking bids:', err)
+    if (err instanceof Error && err.message.includes('requires an index')) {
+      console.log('Waiting for index to be created...')
+      return
+    }
+    error.value = 'Error checking bids'
   }
 }
 
-// Add handleAuctionConfirm function
+// Update handleAuctionConfirm to cleanup timer
 const handleAuctionConfirm = async () => {
   if (!auctionPlayer.value || !participant.value?.id) return
+
+  // Clean up timer first
+  cleanupTimer()
 
   try {
     const participantRef = doc(participantsCollection, participant.value.id)
     const mercatoRef = doc(db, 'mercato', 'players')
 
-    // Create player object with bid amount, ensuring all fields are defined
+    // Create player object with bid amount
     const playerWithPrice: Player = {
       name: auctionPlayer.value.name,
       team: auctionPlayer.value.team,
@@ -664,20 +686,16 @@ const handleAuctionConfirm = async () => {
       bidsRef,
       where('playerId', '==', auctionPlayer.value.name),
       where('bidderParticipantId', '==', participant.value.id),
-      where('processed', '==', true),
     )
     const querySnapshot = await getDocs(q)
-    const bid = querySnapshot.docs[0]?.data()
+    // Filter completed bids in memory instead of in the query
+    const relevantBids = querySnapshot.docs.filter((doc) => !doc.data().completed)
+    const bid = relevantBids[0]?.data()
 
-    // Get current mercato players and ensure they are valid
+    // Get current mercato players
     const currentMercatoPlayers = mercatoDoc.data().players || []
-    const validMercatoPlayers = currentMercatoPlayers.filter(
-      (p: Player) => p && p.name && p.team && p.role,
-    )
-
     let updatedTeam
-    // Remove the won player from mercato
-    const updatedMercatoPlayers = validMercatoPlayers.filter(
+    const updatedMercatoPlayers = currentMercatoPlayers.filter(
       (p: Player) => p.name !== auctionPlayer.value?.name,
     )
 
@@ -690,7 +708,7 @@ const handleAuctionConfirm = async () => {
         .filter((p: Player) => p.name !== playerToReplace.name)
         .concat([playerWithPrice])
 
-      // Add replaced player back to mercato with all required fields
+      // Add replaced player back to mercato
       const replacedPlayer = {
         name: playerToReplace.name,
         team: playerToReplace.team,
@@ -704,7 +722,7 @@ const handleAuctionConfirm = async () => {
       updatedTeam = [...currentTeam, playerWithPrice]
     }
 
-    // Update mercato first with a simpler structure
+    // Update mercato
     const mercatoPlayers = updatedMercatoPlayers.map((p: Player) => ({
       name: p.name,
       team: p.team,
@@ -714,7 +732,7 @@ const handleAuctionConfirm = async () => {
     }))
     await setDoc(mercatoRef, { players: mercatoPlayers })
 
-    // Update participant with a simpler structure
+    // Update participant
     const teamPlayers = updatedTeam.map((p) => ({
       name: p.name,
       team: p.team,
@@ -728,16 +746,16 @@ const handleAuctionConfirm = async () => {
       credits: (participant.value?.credits || 500) - auctionBidAmount.value,
     })
 
-    // Mark bids as processed with a simple update
-    const allBidsQuery = query(
-      bidsRef,
-      where('playerId', '==', auctionPlayer.value.name),
-      where('bidderParticipantId', '==', participant.value.id),
-    )
-    const allBidsSnapshot = await getDocs(allBidsQuery)
+    // Mark all related bids as completed
     await Promise.all(
-      allBidsSnapshot.docs.map((doc) =>
-        setDoc(doc.ref, { ...doc.data(), processed: true, completed: true }),
+      relevantBids.map((doc) =>
+        setDoc(doc.ref, {
+          ...doc.data(),
+          processed: true,
+          completed: true,
+          completedAt: Timestamp.fromDate(new Date()),
+          finalReplacedPlayer: playerToReplace || null,
+        }),
       ),
     )
 
@@ -747,8 +765,13 @@ const handleAuctionConfirm = async () => {
       participant.value.credits = (participant.value.credits || 500) - auctionBidAmount.value
     }
 
-    // Hide notification
+    // Reset auction state
     showAuctionNotification.value = false
+    auctionPlayer.value = null
+    auctionBidAmount.value = 0
+    selectedReplacement.value = null
+    initialReplacement.value = null
+    timeLeft.value = 0
   } catch (error) {
     console.error('Error updating team:', error)
   }

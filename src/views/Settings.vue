@@ -76,6 +76,25 @@
         </div>
 
         <div class="setting-item">
+          <label for="auctionConfirmationMinutes">Auction Confirmation Time (Minutes):</label>
+          <div class="setting-control">
+            <input
+              type="number"
+              id="auctionConfirmationMinutes"
+              v-model="auctionConfirmationMinutes"
+              :disabled="!isAdmin"
+              min="1"
+              max="4320"
+            />
+          </div>
+          <p class="setting-description">
+            The time in minutes before a won auction is automatically confirmed. During this time,
+            the winner can choose which player to replace (if needed). Minimum 1 minute, maximum 72
+            hours (4320 minutes).
+          </p>
+        </div>
+
+        <div class="setting-item">
           <label for="counterbidExpirationMinutes">Counterbid Expiration Time (Minutes):</label>
           <div class="setting-control">
             <input
@@ -118,6 +137,7 @@ const maxTeamSize = ref(25)
 const initialBudget = ref(400)
 const bidExpirationMinutes = ref(1440)
 const counterbidExpirationMinutes = ref(1440)
+const auctionConfirmationMinutes = ref(720)
 
 // Keep track of original values for change detection
 const originalValues = ref({
@@ -125,6 +145,7 @@ const originalValues = ref({
   initialBudget: 400,
   bidExpirationMinutes: 1440,
   counterbidExpirationMinutes: 1440,
+  auctionConfirmationMinutes: 720,
 })
 
 const hasChanges = computed(() => {
@@ -132,7 +153,8 @@ const hasChanges = computed(() => {
     maxTeamSize.value !== originalValues.value.maxTeamSize ||
     initialBudget.value !== originalValues.value.initialBudget ||
     bidExpirationMinutes.value !== originalValues.value.bidExpirationMinutes ||
-    counterbidExpirationMinutes.value !== originalValues.value.counterbidExpirationMinutes
+    counterbidExpirationMinutes.value !== originalValues.value.counterbidExpirationMinutes ||
+    auctionConfirmationMinutes.value !== originalValues.value.auctionConfirmationMinutes
   )
 })
 
@@ -145,6 +167,7 @@ const fetchSettings = async () => {
       initialBudget.value = data.initialBudget ?? 400
       bidExpirationMinutes.value = data.bidExpirationMinutes ?? 1440
       counterbidExpirationMinutes.value = data.counterbidExpirationMinutes ?? 1440
+      auctionConfirmationMinutes.value = data.auctionConfirmationMinutes ?? 720
 
       // Update original values
       originalValues.value = {
@@ -152,6 +175,7 @@ const fetchSettings = async () => {
         initialBudget: data.initialBudget ?? 400,
         bidExpirationMinutes: data.bidExpirationMinutes ?? 1440,
         counterbidExpirationMinutes: data.counterbidExpirationMinutes ?? 1440,
+        auctionConfirmationMinutes: data.auctionConfirmationMinutes ?? 720,
       }
     } else {
       // Initialize settings if they don't exist
@@ -160,6 +184,7 @@ const fetchSettings = async () => {
         initialBudget: 400,
         bidExpirationMinutes: 1440,
         counterbidExpirationMinutes: 1440,
+        auctionConfirmationMinutes: 720,
       }
       await setDoc(doc(db, 'settings', 'general'), defaultSettings)
       originalValues.value = { ...defaultSettings }
@@ -179,6 +204,7 @@ const saveSettings = async () => {
       initialBudget: initialBudget.value,
       bidExpirationMinutes: bidExpirationMinutes.value,
       counterbidExpirationMinutes: counterbidExpirationMinutes.value,
+      auctionConfirmationMinutes: auctionConfirmationMinutes.value,
     }
 
     await setDoc(doc(db, 'settings', 'general'), settings)

@@ -7,6 +7,7 @@ export interface Settings {
   initialBudget: number
   bidExpirationMinutes: number
   counterbidExpirationMinutes: number
+  auctionConfirmationMinutes: number
 }
 
 export function useSettings() {
@@ -14,6 +15,7 @@ export function useSettings() {
   const initialBudget = ref(400)
   const bidExpirationMinutes = ref(1440) // 24 hours in minutes
   const counterbidExpirationMinutes = ref(1440)
+  const auctionConfirmationMinutes = ref(720) // 12 hours in minutes
   const isLoading = ref(true)
   const error = ref('')
 
@@ -26,6 +28,7 @@ export function useSettings() {
         initialBudget.value = data.initialBudget ?? 400
         bidExpirationMinutes.value = data.bidExpirationMinutes ?? 1440
         counterbidExpirationMinutes.value = data.counterbidExpirationMinutes ?? 1440
+        auctionConfirmationMinutes.value = data.auctionConfirmationMinutes ?? 720
       }
     } catch (err) {
       console.error('Error loading settings:', err)
@@ -44,6 +47,7 @@ export function useSettings() {
     initialBudget,
     bidExpirationMinutes,
     counterbidExpirationMinutes,
+    auctionConfirmationMinutes,
     isLoading,
     error,
     fetchSettings,
