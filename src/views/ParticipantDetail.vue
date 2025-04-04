@@ -162,7 +162,7 @@
             <section class="team-info">
               <div class="team-info--totalPlayers">
                 Numero di giocatori:
-                <span :class="isTeamFull ? 'textWarning--inline' : ''">
+                <span :class="isTeamOverloaded ? 'textWarning--inline' : ''">
                   {{ sortedTeam.length }}
                 </span>
               </div>
@@ -319,7 +319,7 @@ const replacementNeeded = computed(() => {
   return team.value.length >= maxTeamSize.value
 })
 
-const isTeamFull = computed(() => sortedTeam.value.length >= maxTeamSize.value)
+const isTeamOverloaded = computed(() => sortedTeam.value.length > maxTeamSize.value)
 
 // Create a converter for Participant type
 const participantConverter = {
